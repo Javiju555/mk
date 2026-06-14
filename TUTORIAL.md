@@ -6,13 +6,14 @@
 
 ## Índice
 1. [El Daemon (`mk-daemon`) y Seguridad](#1-el-daemon-mk-daemon-y-seguridad)
-2. [Sintaxis de Scripts (`.mk`)](#2-sintaxis-de-scripts-mk)
-3. [Referencia Completa de Comandos](#3-referencia-completa-de-comandos)
-4. [Ejemplos Prácticos para LLMs](#4-ejemplos-prácticos-para-llms)
-5. [Planificación de Tareas](#5-planificación-de-tareas)
-6. [Depuración y Registro de Actividad (Logs)](#6-depuración-y-registro-de-actividad-logs)
-7. [Configuración Avanzada y Acceso sin Contraseña (Udev)](#7-configuración-avanzada-y-acceso-sin-contraseña-udev)
-8. [Resolución de Problemas Comunes (Troubleshooting)](#8-resolución-de-problemas-comunes-troubleshooting)
+2. [Uso Directo desde la Terminal (Comandos Simples)](#2-uso-directo-desde-la-terminal-comandos-simples)
+3. [Sintaxis de Scripts (`.mk`)](#3-sintaxis-de-scripts-mk)
+4. [Referencia Completa de Comandos](#4-referencia-completa-de-comandos)
+5. [Ejemplos Prácticos para LLMs](#5-ejemplos-prácticos-para-llms)
+6. [Planificación de Tareas](#6-planificación-de-tareas)
+7. [Depuración y Registro de Actividad (Logs)](#7-depuración-y-registro-de-actividad-logs)
+8. [Configuración Avanzada y Acceso sin Contraseña (Udev)](#8-configuración-avanzada-y-acceso-sin-contraseña-udev)
+9. [Resolución de Problemas Comunes (Troubleshooting)](#9-resolución-de-problemas-comunes-troubleshooting)
 
 ---
 
@@ -41,7 +42,46 @@ mk daemon status
 
 ---
 
-## 2. Sintaxis de Scripts (`.mk`)
+## 2. Uso Directo desde la Terminal (Comandos Simples)
+
+Cualquier comando básico de `mk` se puede ejecutar directamente en tu consola sin necesidad de escribir un archivo de script. Esto es ideal para automatizaciones rápidas de una sola línea o alias de terminal:
+
+* **Escribir texto:**
+  ```bash
+  mk text "Hola mundo"
+  ```
+* **Pulsar Enter:**
+  ```bash
+  mk enter
+  ```
+* **Enviar combinaciones de teclas (atajos):**
+  ```bash
+  mk key "ctrl+alt+t"
+  ```
+* **Esperar un tiempo:**
+  ```bash
+  mk wait "2s"
+  ```
+* **Pegar texto (vía portapapeles):**
+  ```bash
+  mk paste "Texto especial con tildes y eñes"
+  ```
+* **Pegar archivos y carpetas directamente:**
+  Puedes pegar archivos completos o la estructura de un directorio en tu navegador simplemente ejecutando:
+  ```bash
+  mk paste-file Cargo.toml
+  mk paste-dir src
+  ```
+* **Ejecutar comandos programados en consola:**
+  Puedes programar un comando simple desde la consola usando `in` o `at`:
+  ```bash
+  mk in "5s" enter
+  mk at "23:59" paste-file "informe.txt"
+  ```
+
+---
+
+## 3. Sintaxis de Scripts (`.mk`)
 
 Los scripts son simples archivos de texto plano con extensión `.mk`.
 * **Comentarios:** Cualquier texto precedido por `#` es ignorado.
@@ -50,7 +90,7 @@ Los scripts son simples archivos de texto plano con extensión `.mk`.
 
 ---
 
-## 3. Referencia Completa de Comandos
+## 4. Referencia Completa de Comandos
 
 ### Simulación de Teclado y Portapapeles
 
@@ -122,7 +162,7 @@ Presiona la tecla invisible F15 de forma periódica en segundo plano para evitar
 
 ---
 
-## 4. Ejemplos Prácticos para LLMs
+## 5. Ejemplos Prácticos para LLMs
 
 ### Ejemplo A: Pasar un archivo de código y pedir feedback
 Crea un script `pedir_ayuda.mk`:
@@ -154,7 +194,7 @@ enter
 
 ---
 
-## 5. Planificación de Tareas
+## 6. Planificación de Tareas
 
 Puedes programar scripts para que se ejecuten a horas exactas (utilizando tu zona horaria local).
 
@@ -185,6 +225,7 @@ nohup mk run mi_script.mk > /dev/null 2>&1 &
 ```
 
 ---
+
 
 ## 6. Depuración y Registro de Actividad (Logs)
 
