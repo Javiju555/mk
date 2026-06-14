@@ -10,6 +10,9 @@
 3. [Referencia Completa de Comandos](#3-referencia-completa-de-comandos)
 4. [Ejemplos Prácticos para LLMs](#4-ejemplos-prácticos-para-llms)
 5. [Planificación de Tareas](#5-planificación-de-tareas)
+6. [Depuración y Registro de Actividad (Logs)](#6-depuración-y-registro-de-actividad-logs)
+7. [Configuración Avanzada y Acceso sin Contraseña (Udev)](#7-configuración-avanzada-y-acceso-sin-contraseña-udev)
+8. [Resolución de Problemas Comunes (Troubleshooting)](#8-resolución-de-problemas-comunes-troubleshooting)
 
 ---
 
@@ -175,10 +178,78 @@ Ejecuta el bloque tras una espera.
   }
   ```
 
----
-
-## Ejecutar scripts de forma independiente
+### Ejecutar scripts de forma independiente
 Para lanzar tu script en segundo plano y poder cerrar la consola tranquilamente mientras se espera la hora planificada:
 ```bash
 nohup mk run mi_script.mk > /dev/null 2>&1 &
 ```
+
+---
+
+## 6. Depuración y Registro de Actividad (Logs)
+
+Para asegurar que un script funciona como deseas antes de dejarlo corriendo solo en segundo plano, `mk` ofrece herramientas de depuración:
+
+### El Modo de Simulación (`--dry-run`)
+Permite verificar la lógica del script (esperas, bucles, variables y carga de archivos) por la terminal sin llegar a pulsar ninguna tecla física en la pantalla de tu ordenador:
+```bash
+mk --dry-run run mi_script.mk
+```
+*Esto mostrará en tiempo real por la terminal cada acción que `mk` ejecutaría de manera simulada.*
+
+### Registro de Actividad (Logs)
+Puedes guardar un historial detallado de todas las pulsaciones de teclado y comandos simulados en un archivo de logs:
+```bash
+mk --log historial.log run mi_script.mk
+```
+Cada línea del archivo `historial.log` registrará la fecha y hora exacta (`timestamp`), el tipo de acción y si se ejecutó con éxito.
+
+---
+
+## 7. Configuración Avanzada y Acceso sin Contraseña (Udev)
+
+Por defecto, para abrir `/dev/uinput` y crear el teclado virtual, Linux requiere privilegios de superusuario (`sudo`). Si quieres poder ejecutar `mk-daemon` como usuario normal sin que te solicite nunca la contraseña `sudo`, sigue estos pasos:
+
+1. **Crear la regla de Udev:**
+   Crea un archivo de configuración en `/etc/udev/rules.d/99-uinput.rules`:
+   ```bash
+   sudo nano /etc/udev/rules.d/99-uinput.rules
+   ```
+2. **Escribir el permiso:**
+   Introduce el siguiente contenido para que el grupo del sistema `input` tenga acceso de lectura/escritura al dispositivo virtual:
+   ```text
+   KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+   ```
+3. **Aplicar la configuración:**
+   Recarga las reglas de udev para que el sistema las reconozca inmediatamente:
+   ```bash
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+   ```
+4. **Unirte al grupo `input`:**
+   Asegúrate de que tu usuario pertenece al grupo `input` de tu sistema:
+   ```bash
+   sudo usermod -aG input $USER
+   ```
+   *(Nota: Deberás cerrar sesión en tu escritorio de Linux y volver a iniciarla para que tu grupo de usuario se actualice).*
+
+Una vez hecho esto, podrás arrancar el daemon simplemente llamando a `mk-daemon &` como un usuario normal.
+
+---
+
+## 8. Resolución de Problemas Comunes (Troubleshooting)
+
+### El teclado escribe caracteres incorrectos o se come las tildes/eñes
+* **Causa:** El comando `text` simula pulsaciones de teclas basadas en la distribución física de EE.UU. Si tu teclado está configurado en español u otro idioma, los caracteres diferirán.
+* **Solución:** Utiliza el comando **`paste`** (o `paste-file` / `paste-dir`). Al usar el portapapeles y simular un Ctrl+V, evita por completo incompatibilidades de diseño de teclas.
+
+### Los atajos no se ejecutan en mi aplicación (como cambiar de pestaña)
+* **Causa:** El entorno de escritorio a veces necesita un pequeño instante para cambiar el foco a la ventana activa antes de recibir combinaciones de teclas.
+* **Solución:** Introduce un pequeño tiempo de espera de seguridad antes del atajo. Ej:
+  ```bash
+  wait "200ms"
+  key "ctrl+tab"
+  ```
+
+### El script planificado a las 4:33 AM no se ejecutó de noche
+* **Causa:** Si tu ordenador se suspendió (entró en Sleep) o la pantalla de bloqueo de sesión se activó, el sistema operativo pausa los procesos de usuario o restringe la entrada de teclado por seguridad.
+* **Solución:** Desactiva temporalmente el bloqueo de pantalla y la suspensión automática en los ajustes de energía de tu sistema si planeas dejar una tarea planificada por la noche.
