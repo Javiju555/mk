@@ -23,6 +23,9 @@ pub fn run() -> Result<()> {
         Ok(v) => println!("  DISPLAY: {v}"),
         Err(_) => println!("  DISPLAY: (not set)"),
     }
+    println!("  System Local Time: {}", chrono::Local::now());
+    println!("  System UTC Time:   {}", chrono::Utc::now());
+
 
     println!("\nKeyboard backends:");
     check_tool("wtype");

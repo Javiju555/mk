@@ -22,22 +22,23 @@ pub fn delay_until_time(time_str: &str) -> Result<Duration> {
     }
 
     let now = chrono::Local::now();
-    let current_h = now.hour();
-    let current_m = now.minute();
-    let current_s = now.second();
+    let target = now
+        .with_hour(target_h)
+        .and_then(|dt| dt.with_minute(target_m))
+        .and_then(|dt| dt.with_second(0))
+        .and_then(|dt| dt.with_nanosecond(0))
+        .context("Failed to construct target datetime")?;
 
-    let target_secs = (target_h * 3600 + target_m * 60) as i64;
-    let current_secs = (current_h * 3600 + current_m * 60 + current_s) as i64;
-
-    let mut delay_secs = if target_secs > current_secs {
-        target_secs - current_secs
+    let target = if target <= now {
+        target + chrono::Duration::days(1)
     } else {
-        // Time already passed today, schedule for tomorrow
-        86400 - current_secs + target_secs
+        target
     };
 
-    // Avoid sleeping 0 seconds if the time is right now
-    if delay_secs == 0 {
+    let delay = target.signed_duration_since(now);
+    let mut delay_secs = delay.num_seconds();
+
+    if delay_secs <= 0 {
         delay_secs = 86400;
     }
 
