@@ -422,10 +422,19 @@ impl UinputDevice {
             self.press_key(m);
         }
 
+        if !modifiers.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(12));
+        }
+
         // Press and release main key
         if let Some(key) = main_key {
             self.press_key(key);
+            std::thread::sleep(std::time::Duration::from_millis(12));
             self.release_key(key);
+        }
+
+        if !modifiers.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(12));
         }
 
         // Release modifiers in reverse order
