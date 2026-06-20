@@ -3,7 +3,7 @@ use crate::clipboard;
 use anyhow::{bail, Result};
 use std::process::Command;
 
-pub fn paste(text: &str, backend: &dyn Backend) -> Result<()> {
+pub fn paste(text: &str, shortcut: &str, backend: &dyn Backend) -> Result<()> {
     let server = backend::detect_display_server();
     let tool = clipboard::detect_clipboard_tool(server);
 
@@ -48,6 +48,6 @@ pub fn paste(text: &str, backend: &dyn Backend) -> Result<()> {
         }
     }
 
-    backend.press_key("ctrl+v")?;
+    backend.press_key(shortcut)?;
     Ok(())
 }

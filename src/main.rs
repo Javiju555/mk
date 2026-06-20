@@ -48,10 +48,13 @@ enum Commands {
         /// Duration: "10s", "5m", "2h", "250ms"
         duration: String,
     },
-    /// Copy text to clipboard and paste with Ctrl+V
+    /// Copy text to clipboard and paste
     Paste {
         /// Text to paste
         text: String,
+        /// Shortcut key combination to trigger paste (default: ctrl+v)
+        #[arg(short, long, default_value = "ctrl+v")]
+        shortcut: String,
     },
     /// Execute an action after a delay
     In {
@@ -124,10 +127,13 @@ enum ScheduledAction {
         /// Key to press
         key: String,
     },
-    /// Copy text to clipboard and paste with Ctrl+V
+    /// Copy text to clipboard and paste
     Paste {
         /// Text to paste
         text: String,
+        /// Shortcut key combination to trigger paste (default: ctrl+v)
+        #[arg(short, long, default_value = "ctrl+v")]
+        shortcut: String,
     },
     /// Wait for a duration
     Wait {
@@ -142,7 +148,7 @@ impl ScheduledAction {
             ScheduledAction::Text { message } => parser::Command::Text(message.clone()),
             ScheduledAction::Enter => parser::Command::Enter,
             ScheduledAction::Key { key } => parser::Command::Key(key.clone()),
-            ScheduledAction::Paste { text } => parser::Command::Paste(text.clone()),
+            ScheduledAction::Paste { text, shortcut } => parser::Command::Paste(text.clone(), shortcut.clone()),
             ScheduledAction::Wait { duration } => parser::Command::Wait(
                 parser::parse_duration(duration).unwrap_or(Duration::from_secs(0)),
             ),
@@ -192,8 +198,8 @@ fn main() -> Result<()> {
             let dur = parser::parse_duration(&duration)?;
             interp.run(&[parser::Command::Wait(dur)])?;
         }
-        Commands::Paste { text } => {
-            interp.run(&[parser::Command::Paste(text)])?;
+        Commands::Paste { text, shortcut } => {
+            interp.run(&[parser::Command::Paste(text, shortcut)])?;
         }
         Commands::In { duration, action } => {
             let dur = parser::parse_duration(&duration)?;

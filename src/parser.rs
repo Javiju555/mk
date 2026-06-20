@@ -14,7 +14,7 @@ pub enum Command {
     Enter,
     Key(String),
     Wait(Duration),
-    Paste(String),
+    Paste(String, String),
     Set(String, String),
     Repeat(u64, Vec<Command>),
     Include(String),
@@ -264,12 +264,20 @@ fn parse_script_inner(
                 i += 1;
             }
             "paste" => {
-                let arg = parts
+                let arg1 = parts
                     .get(1)
-                    .context("paste command requires an argument")?;
-                let arg = expand_vars(arg, vars);
-                let text = unquote(&arg);
-                commands.push(Command::Paste(text.to_string()));
+                    .context("paste command requires at least one argument")?;
+                let arg1 = expand_vars(arg1, vars);
+                let text = unquote(&arg1).to_string();
+
+                let shortcut = if let Some(arg2) = parts.get(2) {
+                    let arg2 = expand_vars(arg2, vars);
+                    unquote(&arg2).to_string()
+                } else {
+                    "ctrl+v".to_string()
+                };
+
+                commands.push(Command::Paste(text, shortcut));
                 i += 1;
             }
             "paste-file" => {
@@ -489,12 +497,13 @@ impl<'a> Interpreter<'a> {
                 }
                 self.log_action("wait", &format!("{dur:?}"), "ok")?;
             }
-            Command::Paste(text) => {
+            Command::Paste(text, shortcut) => {
                 let text = expand_vars(text, &self.vars);
+                let shortcut = expand_vars(shortcut, &self.vars);
                 if self.dry_run {
-                    println!("[dry-run] paste: \"{text}\"");
+                    println!("[dry-run] paste: \"{text}\" (shortcut: {shortcut})");
                 } else {
-                    paste::paste(&text, self.backend)?;
+                    paste::paste(&text, &shortcut, self.backend)?;
                 }
                 self.log_action("paste", &text, "ok")?;
             }
@@ -511,7 +520,7 @@ impl<'a> Interpreter<'a> {
                 if self.dry_run {
                     println!("[dry-run] paste-file: \"{path}\"");
                 } else {
-                    paste::paste(&formatted, self.backend)?;
+                    paste::paste(&formatted, "ctrl+v", self.backend)?;
                 }
                 self.log_action("paste-file", &path, "ok")?;
             }
@@ -522,7 +531,7 @@ impl<'a> Interpreter<'a> {
                     println!("[dry-run] paste-dir: \"{path}\"");
                 } else {
                     let formatted = collect_dir_contents(dir_path)?;
-                    paste::paste(&formatted, self.backend)?;
+                    paste::paste(&formatted, "ctrl+v", self.backend)?;
                 }
                 self.log_action("paste-dir", &path, "ok")?;
             }
@@ -977,7 +986,10 @@ mod tests {
         let cmds = parse_script(script).unwrap();
         assert_eq!(cmds.len(), 1);
         match &cmds[0] {
-            Command::Paste(t) => assert_eq!(t, "some text"),
+            Command::Paste(t, s) => {
+                assert_eq!(t, "some text");
+                assert_eq!(s, "ctrl+v");
+            }
             _ => panic!("expected Paste command"),
         }
     }
