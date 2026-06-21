@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0] - 2026-06-22
+
+### Added
+- **Reorganización Modular de Librería:**
+  - Estructuración de las APIs en cinco módulos semánticos principales: `input` (emulación de entrada), `output` (portapapeles y pegado), `vision` (capturas de pantalla y sub-regiones), `windows` (enumeración y enfoque de ventanas) y `accessibility` (árbol de accesibilidad UI).
+- **Captura por Región de Pantalla:**
+  - Nueva función `capture_region` para recortar y guardar sub-regiones específicas de la pantalla, optimizando el ancho de banda y el consumo de tokens visuales.
+- **Gestión Multiplataforma de Ventanas:**
+  - Enumeración y enfoque de ventanas activas (`list_windows`, `active_window`, `focus_window`) integrando `xcap` y llamadas nativas o scripts específicos (Win32 en Windows, AppleScript en macOS y `xdotool` en Linux).
+- **Stubs de Accesibilidad:**
+  - Estructuras y contratos base (`UiElement` y stubs `get_ui_tree`, `find_button`, `find_input`) para futura interacción semántica en Computer Use.
+
 ## [0.5.0] - 2026-06-21
 
 ### Added
