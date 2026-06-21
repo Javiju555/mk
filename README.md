@@ -1,16 +1,21 @@
 # mk
 
-CLI para automatizar escritura y teclas en interfaces gráficas de Linux.
+CLI multiplataforma para automatizar escritura, pulsaciones de teclas, simulaciones de ratón y capturas de pantalla en Linux, Windows y macOS.
 
-Detecta automáticamente si estás en Wayland o X11 y selecciona el backend adecuado.
+## Sistemas Operativos y Backends soportados
 
-## Backends soportados
+- **Linux**: Detecta automáticamente si estás en Wayland o X11 para seleccionar el backend adecuado (`wtype`, `xdotool`, `ydotool` o el daemon virtual uinput `mk-daemon`).
+- **Windows**: Automatización nativa utilizando la API Win32 (`SendInput` y `SetCursorPos`). No requiere dependencias adicionales ni daemons externos.
+- **macOS**: Automatización nativa utilizando el framework Core Graphics (`CGEvent`). No requiere dependencias adicionales ni daemons externos (se requieren permisos de Accesibilidad en Preferencias del Sistema).
 
-| Backend    | Wayland | X11 |
-|------------|---------|-----|
-| `wtype`    | ✅      | ✅  |
-| `xdotool`  | ❌      | ✅  |
-| `ydotool`  | ✅      | ❌  |
+| Backend / SO | Linux (Wayland) | Linux (X11) | Windows | macOS |
+|--------------|-----------------|-------------|---------|-------|
+| `wtype`      | ✅              | ✅          | ❌      | ❌    |
+| `xdotool`    | ❌              | ✅          | ❌      | ❌    |
+| `ydotool`    | ✅              | ❌          | ❌      | ❌    |
+| `mk-daemon`  | ✅ (uinput)     | ✅ (uinput) | ❌      | ❌    |
+| `Win32 API`  | ❌              | ❌          | ✅      | ❌    |
+| `CoreGraph`  | ❌              | ❌          | ❌      | ✅    |
 
 ## Instalación
 
@@ -66,6 +71,40 @@ mk paste "texto copiado"
 ```
 
 En Wayland usa `wl-copy`, en X11 usa `xclip` o `xsel`. Si no hay herramienta de portapapeles, usa `type_text` como fallback.
+
+### Simulación de ratón
+
+- **En Linux**: Se requiere que `mk-daemon` esté activo para abrir el dispositivo táctil absoluto en `/dev/uinput` y poder interactuar de forma segura en Wayland y X11.
+- **En Windows y macOS**: Las acciones de ratón funcionan directamente de forma nativa e instantánea sin necesidad de ejecutar ningún daemon ni requerir permisos adicionales más allá de Accesibilidad (en macOS).
+
+```bash
+# Mover cursor (de forma progresiva en 500ms o instantánea si se omite la duración)
+mk move 500 500 --duration "500ms"
+
+# Hacer clic (botón izquierdo por defecto, o custom con -b)
+mk click 500 500 --button right --duration "200ms"
+
+# Arrastrar (presiona botón izquierdo, se desplaza y luego lo suelta)
+mk drag 100 100 800 800 --duration "1s"
+
+# Presionar y soltar botones de forma persistente
+mk mouse-down left
+mk mouse-up left
+
+# Hacer scroll (clicks positivos hacia arriba/derecha, negativos hacia abajo/izquierda)
+mk scroll 3
+mk scroll --horizontal -- -2
+```
+
+Las coordenadas de pantalla `(X, Y)` en píxeles se detectan de forma automática respecto a tu monitor principal y se escalan transparentemente a la tableta absoluta.
+
+### Captura de pantalla (Screenshots)
+
+Toma una captura de pantalla del monitor primario y la guarda en la ruta indicada de forma nativa:
+
+```bash
+mk screenshot ruta/de/mi_imagen.png
+```
 
 ### Ejecutar un script
 
@@ -126,12 +165,26 @@ key "ctrl+s"
 | `set`        | Definir variable                    | `set nombre "Claude"`            |
 | `repeat`     | Repetir bloque N veces              | `repeat 3 { ... }`               |
 | `include`    | Incluir otro archivo                | `include "common.mk"`            |
+| `move`       | Mover cursor (opcional duración)    | `move 500 500 "500ms"`           |
+| `click`      | Clic en coordenadas                 | `click 500 500 "left" "200ms"`   |
+| `drag`       | Arrastre de cursor                  | `drag 10 10 100 100 "1s"`        |
+| `mouse-down` | Presionar botón                     | `mouse-down "left"`              |
+| `mouse-up`   | Soltar botón                        | `mouse-up "left"`                |
+| `scroll`     | Desplazar rueda del ratón           | `scroll -3 "false"`              |
+| `screenshot` | Captura de pantalla                 | `screenshot "foto.png"`          |
 
 ### Duraciones soportadas
 
+Se admiten duraciones simples y compuestas (separadas opcionalmente por espacios):
+- `Nms` — milisegundos (ej: `250ms`)
 - `Ns` — segundos (ej: `5s`)
 - `Nm` — minutos (ej: `10m`)
 - `Nh` — horas (ej: `2h`)
+
+Ejemplos de duraciones compuestas válidas:
+- `"1h 53m"`
+- `"1h53m"`
+- `"2h 30m 10s 500ms"`
 
 ### Variables
 

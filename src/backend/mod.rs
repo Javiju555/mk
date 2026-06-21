@@ -1,24 +1,64 @@
+#[cfg(target_os = "linux")]
 pub mod daemon;
+#[cfg(target_os = "linux")]
 mod wtype;
+#[cfg(target_os = "linux")]
 mod xdotool;
+#[cfg(target_os = "linux")]
 mod ydotool;
 
-use anyhow::{bail, Result};
+#[cfg(target_os = "windows")]
+pub mod windows;
+
+#[cfg(target_os = "macos")]
+pub mod macos;
+
+use anyhow::{bail, Result, Context};
+#[cfg(target_os = "linux")]
 use std::fmt;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 pub trait Backend {
     fn type_text(&self, text: &str) -> Result<()>;
     fn press_key(&self, key: &str) -> Result<()>;
     fn display_name(&self) -> &str;
+
+    fn mouse_move(&self, _x: i32, _y: i32, _duration_ms: u64) -> Result<()> {
+        bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
+    }
+    fn mouse_click(&self, _x: i32, _y: i32, _button: &str, _duration_ms: u64) -> Result<()> {
+        bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
+    }
+    fn mouse_drag(&self, _x1: i32, _y1: i32, _x2: i32, _y2: i32, _duration_ms: u64) -> Result<()> {
+        bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
+    }
+    fn mouse_down(&self, _button: &str) -> Result<()> {
+        bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
+    }
+    fn mouse_up(&self, _button: &str) -> Result<()> {
+        bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
+    }
+    fn mouse_scroll(&self, _clicks: i32, _horizontal: bool) -> Result<()> {
+        bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
+    }
+    fn take_screenshot(&self, path: &str) -> Result<()> {
+        let monitors = xcap::Monitor::all().map_err(|e| anyhow::anyhow!("Failed to list monitors: {e}"))?;
+        let monitor = monitors.first().context("No monitors found")?;
+        let image = monitor.capture_image().map_err(|e| anyhow::anyhow!("Failed to capture screen: {e}"))?;
+        image.save(path).context("Failed to save screenshot image")?;
+        Ok(())
+    }
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayServer {
     Wayland,
     X11,
 }
 
+#[cfg(target_os = "linux")]
 impl fmt::Display for DisplayServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -28,6 +68,7 @@ impl fmt::Display for DisplayServer {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn command_exists(name: &str) -> bool {
     Command::new("which")
         .arg(name)
@@ -36,6 +77,7 @@ fn command_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(target_os = "linux")]
 pub fn detect_display_server() -> DisplayServer {
     if let Ok(session) = std::env::var("XDG_SESSION_TYPE") {
         if session == "wayland" {
@@ -52,42 +94,55 @@ pub fn detect_display_server() -> DisplayServer {
 }
 
 pub fn detect_backend() -> Result<Box<dyn Backend>> {
-    // Prefer daemon if running
-    if daemon::daemon_is_running() {
-        return Ok(Box::new(daemon::DaemonBackend));
+    #[cfg(target_os = "linux")]
+    {
+        // Prefer daemon if running
+        if daemon::daemon_is_running() {
+            return Ok(Box::new(daemon::DaemonBackend));
+        }
+
+        let server = detect_display_server();
+        match server {
+            DisplayServer::Wayland => {
+                if command_exists("wtype") {
+                    return Ok(Box::new(wtype::WtypeBackend));
+                }
+                if command_exists("ydotool") {
+                    return Ok(Box::new(ydotool::YdotoolBackend));
+                }
+                bail!(
+                    "No backend available for Wayland.\n\
+                     Options:\n\
+                     1. Start mk-daemon:  sudo mk-daemon\n\
+                     2. Install wtype:    sudo pacman -S wtype\n\
+                     3. Install ydotool:  sudo pacman -S ydotool"
+                );
+            }
+            DisplayServer::X11 => {
+                if command_exists("xdotool") {
+                    return Ok(Box::new(xdotool::XdotoolBackend));
+                }
+                if command_exists("wtype") {
+                    return Ok(Box::new(wtype::WtypeBackend));
+                }
+                bail!(
+                    "No backend available for X11.\n\
+                     Options:\n\
+                     1. Start mk-daemon:  sudo mk-daemon\n\
+                     2. Install xdotool:  sudo pacman -S xdotool"
+                );
+            }
+        }
     }
 
-    let server = detect_display_server();
-    match server {
-        DisplayServer::Wayland => {
-            if command_exists("wtype") {
-                return Ok(Box::new(wtype::WtypeBackend));
-            }
-            if command_exists("ydotool") {
-                return Ok(Box::new(ydotool::YdotoolBackend));
-            }
-            bail!(
-                "No backend available for Wayland.\n\
-                 Options:\n\
-                 1. Start mk-daemon:  sudo mk-daemon\n\
-                 2. Install wtype:    sudo pacman -S wtype\n\
-                 3. Install ydotool:  sudo pacman -S ydotool"
-            );
-        }
-        DisplayServer::X11 => {
-            if command_exists("xdotool") {
-                return Ok(Box::new(xdotool::XdotoolBackend));
-            }
-            if command_exists("wtype") {
-                return Ok(Box::new(wtype::WtypeBackend));
-            }
-            bail!(
-                "No backend available for X11.\n\
-                 Options:\n\
-                 1. Start mk-daemon:  sudo mk-daemon\n\
-                 2. Install xdotool:  sudo pacman -S xdotool"
-            );
-        }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(Box::new(windows::WindowsBackend))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Ok(Box::new(macos::MacosBackend))
     }
 }
 
@@ -106,5 +161,40 @@ impl Backend for DryRunBackend {
 
     fn display_name(&self) -> &str {
         "dry-run"
+    }
+
+    fn mouse_move(&self, x: i32, y: i32, duration_ms: u64) -> Result<()> {
+        println!("[dry-run] mouse_move: to ({x}, {y}) over {duration_ms}ms");
+        Ok(())
+    }
+
+    fn mouse_click(&self, x: i32, y: i32, button: &str, duration_ms: u64) -> Result<()> {
+        println!("[dry-run] mouse_click: button {button} at ({x}, {y}) over {duration_ms}ms");
+        Ok(())
+    }
+
+    fn mouse_drag(&self, x1: i32, y1: i32, x2: i32, y2: i32, duration_ms: u64) -> Result<()> {
+        println!("[dry-run] mouse_drag: from ({x1}, {y1}) to ({x2}, {y2}) over {duration_ms}ms");
+        Ok(())
+    }
+
+    fn mouse_down(&self, button: &str) -> Result<()> {
+        println!("[dry-run] mouse_down: button {button}");
+        Ok(())
+    }
+
+    fn mouse_up(&self, button: &str) -> Result<()> {
+        println!("[dry-run] mouse_up: button {button}");
+        Ok(())
+    }
+
+    fn mouse_scroll(&self, clicks: i32, horizontal: bool) -> Result<()> {
+        println!("[dry-run] mouse_scroll: clicks {clicks}, horizontal {horizontal}");
+        Ok(())
+    }
+
+    fn take_screenshot(&self, path: &str) -> Result<()> {
+        println!("[dry-run] take_screenshot: save to {path}");
+        Ok(())
     }
 }

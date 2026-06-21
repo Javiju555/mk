@@ -24,6 +24,13 @@ pub enum Command {
     PasteFile(String),
     PasteDir(String),
     Exec(String, String),
+    MouseMove(String, String, String),
+    MouseClick(String, String, String, String),
+    MouseDrag(String, String, String, String, String),
+    MouseDown(String),
+    MouseUp(String),
+    MouseScroll(String, String),
+    Screenshot(String),
 }
 
 pub fn parse_duration(s: &str) -> Result<Duration> {
@@ -32,25 +39,72 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
         bail!("Empty duration string");
     }
 
-    let pos = s
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(s.len());
-    if pos == 0 {
-        bail!("Duration must start with a number: {s}");
+    let mut total_duration = Duration::ZERO;
+    let mut chars = s.chars().peekable();
+    let mut parsed_any = false;
+
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+            continue;
+        }
+
+        let mut num_str = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                num_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if num_str.is_empty() {
+            bail!("Duration must start with a number or have a valid number in segment: {}", s);
+        }
+
+        let num: u64 = num_str.parse()
+            .with_context(|| format!("Invalid number in duration: {}", num_str))?;
+
+        while let Some(&c) = chars.peek() {
+            if c.is_whitespace() {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        let mut unit_str = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_alphabetic() {
+                unit_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if unit_str.is_empty() {
+            bail!("Missing unit for number '{}' in duration '{}'", num, s);
+        }
+
+        let segment_duration = match unit_str.as_str() {
+            "ms" => Duration::from_millis(num),
+            "s" => Duration::from_secs(num),
+            "m" => Duration::from_secs(num * 60),
+            "h" => Duration::from_secs(num * 3600),
+            _ => bail!("Unknown duration unit: {unit_str} (use ms, s, m, or h) in duration '{s}'"),
+        };
+
+        total_duration += segment_duration;
+        parsed_any = true;
     }
 
-    let num: u64 = s[..pos]
-        .parse()
-        .with_context(|| format!("Invalid number in duration: {}", &s[..pos]))?;
-    let unit = &s[pos..];
-
-    match unit {
-        "ms" => Ok(Duration::from_millis(num)),
-        "s" => Ok(Duration::from_secs(num)),
-        "m" => Ok(Duration::from_secs(num * 60)),
-        "h" => Ok(Duration::from_secs(num * 3600)),
-        _ => bail!("Unknown duration unit: {unit} (use ms, s, m, or h)"),
+    if !parsed_any {
+        bail!("Could not parse any duration segments in: {}", s);
     }
+
+    Ok(total_duration)
 }
 
 #[allow(dead_code)]
@@ -314,6 +368,112 @@ fn parse_script_inner(
                 commands.push(Command::Exec(var_name.to_string(), command_str.to_string()));
                 i += 1;
             }
+            "move" => {
+                let arg = parts
+                    .get(1)
+                    .context("move command requires: move x y [duration]")?;
+                let arg = expand_vars(arg, vars);
+                let args: Vec<&str> = arg.split_whitespace().collect();
+                if args.len() < 2 || args.len() > 3 {
+                    bail!("move command requires 2 or 3 arguments: move x y [duration]");
+                }
+                let x = args[0].to_string();
+                let y = args[1].to_string();
+                let dur = if args.len() == 3 {
+                    args[2].to_string()
+                } else {
+                    "0s".to_string()
+                };
+                commands.push(Command::MouseMove(x, y, dur));
+                i += 1;
+            }
+            "click" => {
+                let arg = parts
+                    .get(1)
+                    .context("click command requires: click x y [button] [duration]")?;
+                let arg = expand_vars(arg, vars);
+                let args: Vec<&str> = arg.split_whitespace().collect();
+                if args.len() < 2 || args.len() > 4 {
+                    bail!("click command requires 2 to 4 arguments: click x y [button] [duration]");
+                }
+                let x = args[0].to_string();
+                let y = args[1].to_string();
+                let button = if args.len() >= 3 {
+                    args[2].to_string()
+                } else {
+                    "left".to_string()
+                };
+                let dur = if args.len() == 4 {
+                    args[3].to_string()
+                } else {
+                    "0s".to_string()
+                };
+                commands.push(Command::MouseClick(x, y, button, dur));
+                i += 1;
+            }
+            "drag" => {
+                let arg = parts
+                    .get(1)
+                    .context("drag command requires: drag x1 y1 x2 y2 [duration]")?;
+                let arg = expand_vars(arg, vars);
+                let args: Vec<&str> = arg.split_whitespace().collect();
+                if args.len() < 4 || args.len() > 5 {
+                    bail!("drag command requires 4 or 5 arguments: drag x1 y1 x2 y2 [duration]");
+                }
+                let x1 = args[0].to_string();
+                let y1 = args[1].to_string();
+                let x2 = args[2].to_string();
+                let y2 = args[3].to_string();
+                let dur = if args.len() == 5 {
+                    args[4].to_string()
+                } else {
+                    "500ms".to_string()
+                };
+                commands.push(Command::MouseDrag(x1, y1, x2, y2, dur));
+                i += 1;
+            }
+            "mouse-down" => {
+                let button = parts
+                    .get(1)
+                    .map(|s| expand_vars(s, vars))
+                    .unwrap_or_else(|| "left".to_string());
+                commands.push(Command::MouseDown(button));
+                i += 1;
+            }
+            "mouse-up" => {
+                let button = parts
+                    .get(1)
+                    .map(|s| expand_vars(s, vars))
+                    .unwrap_or_else(|| "left".to_string());
+                commands.push(Command::MouseUp(button));
+                i += 1;
+            }
+            "scroll" => {
+                let arg = parts
+                    .get(1)
+                    .context("scroll command requires: scroll clicks [horizontal]")?;
+                let arg = expand_vars(arg, vars);
+                let args: Vec<&str> = arg.split_whitespace().collect();
+                if args.is_empty() || args.len() > 2 {
+                    bail!("scroll command requires 1 or 2 arguments: scroll clicks [horizontal]");
+                }
+                let clicks = args[0].to_string();
+                let horizontal = if args.len() == 2 {
+                    args[1].to_string()
+                } else {
+                    "false".to_string()
+                };
+                commands.push(Command::MouseScroll(clicks, horizontal));
+                i += 1;
+            }
+            "screenshot" => {
+                let arg = parts
+                    .get(1)
+                    .context("screenshot command requires a file path")?;
+                let arg = expand_vars(arg, vars);
+                commands.push(Command::Screenshot(arg));
+                i += 1;
+            }
             _ => bail!("Unknown command: {keyword} on line {}", i + 1),
         }
     }
@@ -384,6 +544,8 @@ pub fn resolve_includes(
 
     Ok(result)
 }
+
+
 
 pub struct Interpreter<'a> {
     backend: &'a dyn Backend,
@@ -553,6 +715,101 @@ impl<'a> Interpreter<'a> {
                 }
                 self.log_action("exec", &format!("{var_name} = ..."), "ok")?;
             }
+            Command::MouseMove(x, y, dur) => {
+                let x_val = expand_vars(x, &self.vars);
+                let y_val = expand_vars(y, &self.vars);
+                let dur_val = expand_vars(dur, &self.vars);
+                let x_parsed: i32 = unquote(&x_val).parse().context("x coordinate must be a number")?;
+                let y_parsed: i32 = unquote(&y_val).parse().context("y coordinate must be a number")?;
+                let dur_parsed = parse_duration(unquote(&dur_val))?;
+
+                if self.dry_run {
+                    println!("[dry-run] mouse_move: to ({x_parsed}, {y_parsed}) over {dur_parsed:?}");
+                } else {
+                    self.backend.mouse_move(x_parsed, y_parsed, dur_parsed.as_millis() as u64)?;
+                }
+                self.log_action("mouse_move", &format!("({x_parsed}, {y_parsed})"), "ok")?;
+            }
+            Command::MouseClick(x, y, button, dur) => {
+                let x_val = expand_vars(x, &self.vars);
+                let y_val = expand_vars(y, &self.vars);
+                let button_val = expand_vars(button, &self.vars);
+                let dur_val = expand_vars(dur, &self.vars);
+                let x_parsed: i32 = unquote(&x_val).parse().context("x coordinate must be a number")?;
+                let y_parsed: i32 = unquote(&y_val).parse().context("y coordinate must be a number")?;
+                let button_clean = unquote(&button_val);
+                let dur_parsed = parse_duration(unquote(&dur_val))?;
+
+                if self.dry_run {
+                    println!("[dry-run] mouse_click: button {button_clean} at ({x_parsed}, {y_parsed}) over {dur_parsed:?}");
+                } else {
+                    self.backend.mouse_click(x_parsed, y_parsed, button_clean, dur_parsed.as_millis() as u64)?;
+                }
+                self.log_action("mouse_click", &format!("button {button_clean} at ({x_parsed}, {y_parsed})"), "ok")?;
+            }
+            Command::MouseDrag(x1, y1, x2, y2, dur) => {
+                let x1_val = expand_vars(x1, &self.vars);
+                let y1_val = expand_vars(y1, &self.vars);
+                let x2_val = expand_vars(x2, &self.vars);
+                let y2_val = expand_vars(y2, &self.vars);
+                let dur_val = expand_vars(dur, &self.vars);
+                let x1_parsed: i32 = unquote(&x1_val).parse().context("x1 coordinate must be a number")?;
+                let y1_parsed: i32 = unquote(&y1_val).parse().context("y1 coordinate must be a number")?;
+                let x2_parsed: i32 = unquote(&x2_val).parse().context("x2 coordinate must be a number")?;
+                let y2_parsed: i32 = unquote(&y2_val).parse().context("y2 coordinate must be a number")?;
+                let dur_parsed = parse_duration(unquote(&dur_val))?;
+
+                if self.dry_run {
+                    println!("[dry-run] mouse_drag: from ({x1_parsed}, {y1_parsed}) to ({x2_parsed}, {y2_parsed}) over {dur_parsed:?}");
+                } else {
+                    self.backend.mouse_drag(x1_parsed, y1_parsed, x2_parsed, y2_parsed, dur_parsed.as_millis() as u64)?;
+                }
+                self.log_action("mouse_drag", &format!("({x1_parsed}, {y1_parsed}) -> ({x2_parsed}, {y2_parsed})"), "ok")?;
+            }
+            Command::MouseDown(button) => {
+                let button_val = expand_vars(button, &self.vars);
+                let button_clean = unquote(&button_val);
+                if self.dry_run {
+                    println!("[dry-run] mouse_down: button {button_clean}");
+                } else {
+                    self.backend.mouse_down(button_clean)?;
+                }
+                self.log_action("mouse_down", button_clean, "ok")?;
+            }
+            Command::MouseUp(button) => {
+                let button_val = expand_vars(button, &self.vars);
+                let button_clean = unquote(&button_val);
+                if self.dry_run {
+                    println!("[dry-run] mouse_up: button {button_clean}");
+                } else {
+                    self.backend.mouse_up(button_clean)?;
+                }
+                self.log_action("mouse_up", button_clean, "ok")?;
+            }
+            Command::MouseScroll(clicks, horizontal) => {
+                let clicks_val = expand_vars(clicks, &self.vars);
+                let horiz_val = expand_vars(horizontal, &self.vars);
+                let clicks_parsed: i32 = unquote(&clicks_val).parse().context("scroll clicks must be a number")?;
+                let h_str = unquote(&horiz_val).to_lowercase();
+                let horiz_parsed = h_str == "horizontal" || h_str == "true" || h_str == "h";
+
+                if self.dry_run {
+                    println!("[dry-run] mouse_scroll: clicks {clicks_parsed}, horizontal {horiz_parsed}");
+                } else {
+                    self.backend.mouse_scroll(clicks_parsed, horiz_parsed)?;
+                }
+                self.log_action("mouse_scroll", &format!("clicks {clicks_parsed}, horizontal {horiz_parsed}"), "ok")?;
+            }
+            Command::Screenshot(path) => {
+                let path_val = expand_vars(path, &self.vars);
+                let path_clean = unquote(&path_val);
+                if self.dry_run {
+                    println!("[dry-run] take_screenshot: save to {path_clean}");
+                } else {
+                    self.backend.take_screenshot(path_clean)?;
+                }
+                self.log_action("screenshot", path_clean, "ok")?;
+            }
         }
         Ok(())
     }
@@ -690,6 +947,13 @@ mod tests {
     #[test]
     fn test_parse_duration_hours() {
         assert_eq!(parse_duration("2h").unwrap(), Duration::from_secs(7200));
+    }
+
+    #[test]
+    fn test_parse_duration_compound() {
+        assert_eq!(parse_duration("1h 53m").unwrap(), Duration::from_secs(3600 + 53 * 60));
+        assert_eq!(parse_duration("1h53m").unwrap(), Duration::from_secs(3600 + 53 * 60));
+        assert_eq!(parse_duration("2h 30m 10s 500ms").unwrap(), Duration::from_millis(7200 * 1000 + 1800 * 1000 + 10 * 1000 + 500));
     }
 
     #[test]
@@ -1110,6 +1374,66 @@ exec output "echo 'hello'"
                 assert_eq!(c, "echo 'hello'");
             }
             _ => panic!("expected Exec"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mouse_and_screenshot() {
+        let script = r#"move 100 200 "500ms"
+click 300 400 "right" "1s"
+drag 10 20 30 40 "2s"
+mouse-down "left"
+mouse-up "left"
+scroll 3 "true"
+screenshot "shot.png"
+"#;
+        let cmds = parse_script(script).unwrap();
+        assert_eq!(cmds.len(), 7);
+        match &cmds[0] {
+            Command::MouseMove(x, y, d) => {
+                assert_eq!(x, "100");
+                assert_eq!(y, "200");
+                assert_eq!(d, "\"500ms\"");
+            }
+            _ => panic!("expected MouseMove"),
+        }
+        match &cmds[1] {
+            Command::MouseClick(x, y, b, d) => {
+                assert_eq!(x, "300");
+                assert_eq!(y, "400");
+                assert_eq!(b, "\"right\"");
+                assert_eq!(d, "\"1s\"");
+            }
+            _ => panic!("expected MouseClick"),
+        }
+        match &cmds[2] {
+            Command::MouseDrag(x1, y1, x2, y2, d) => {
+                assert_eq!(x1, "10");
+                assert_eq!(y1, "20");
+                assert_eq!(x2, "30");
+                assert_eq!(y2, "40");
+                assert_eq!(d, "\"2s\"");
+            }
+            _ => panic!("expected MouseDrag"),
+        }
+        match &cmds[3] {
+            Command::MouseDown(b) => assert_eq!(b, "\"left\""),
+            _ => panic!("expected MouseDown"),
+        }
+        match &cmds[4] {
+            Command::MouseUp(b) => assert_eq!(b, "\"left\""),
+            _ => panic!("expected MouseUp"),
+        }
+        match &cmds[5] {
+            Command::MouseScroll(clicks, horizontal) => {
+                assert_eq!(clicks, "3");
+                assert_eq!(horizontal, "\"true\"");
+            }
+            _ => panic!("expected MouseScroll"),
+        }
+        match &cmds[6] {
+            Command::Screenshot(p) => assert_eq!(p, "\"shot.png\""),
+            _ => panic!("expected Screenshot"),
         }
     }
 }

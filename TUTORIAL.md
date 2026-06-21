@@ -153,8 +153,8 @@ Inserta e interpreta los comandos de otro archivo `.mk` de forma modular.
 ### Tiempos y Esperas
 
 #### `wait "<duración>"`
-Pausa el script. Soporta milisegundos (`ms`), segundos (`s`), minutos (`m`) y horas (`h`).
-* *Ejemplo:* `wait "500ms"`, `wait "2s"`, `wait "1h"`
+Pausa el script. Soporta milisegundos (`ms`), segundos (`s`), minutos (`m`) y horas (`h`), tanto de forma simple como compuestas (separadas por espacio u opcionales).
+* *Ejemplo:* `wait "500ms"`, `wait "2s"`, `wait "1h"`, `wait "1h 53m"`
 
 #### `keep-awake "<intervalo>"`
 Presiona la tecla invisible F15 de forma periódica en segundo plano para evitar que la pantalla se apague o el equipo se suspenda mientras se ejecutan tareas. **No bloquea el resto del script.**

@@ -1,11 +1,14 @@
 mod backend;
+#[cfg(target_os = "linux")]
 mod clipboard;
 mod doctor;
 mod parser;
 mod paste;
 mod scheduler;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::Path;
@@ -94,6 +97,68 @@ enum Commands {
         /// Path to the directory
         path: String,
     },
+    /// Move mouse cursor to coordinates
+    Move {
+        /// Destination X coordinate (pixels)
+        x: i32,
+        /// Destination Y coordinate (pixels)
+        y: i32,
+        /// Duration of progressive slide (e.g. "500ms")
+        #[arg(short, long)]
+        duration: Option<String>,
+    },
+    /// Click a mouse button at coordinates
+    Click {
+        /// X coordinate (pixels)
+        x: i32,
+        /// Y coordinate (pixels)
+        y: i32,
+        /// Button to click: left, right, middle
+        #[arg(short, long, default_value = "left")]
+        button: String,
+        /// Duration of progressive slide before clicking (e.g. "500ms")
+        #[arg(short, long)]
+        duration: Option<String>,
+    },
+    /// Drag the mouse from start to end coordinates
+    Drag {
+        /// Start X coordinate
+        x1: i32,
+        /// Start Y coordinate
+        y1: i32,
+        /// End X coordinate
+        x2: i32,
+        /// End Y coordinate
+        y2: i32,
+        /// Duration of slide (e.g. "500ms", default "500ms")
+        #[arg(short, long)]
+        duration: Option<String>,
+    },
+    /// Press and hold a mouse button
+    MouseDown {
+        /// Button to press: left, right, middle (default: left)
+        #[arg(default_value = "left")]
+        button: String,
+    },
+    /// Release a mouse button
+    MouseUp {
+        /// Button to release: left, right, middle (default: left)
+        #[arg(default_value = "left")]
+        button: String,
+    },
+    /// Scroll the mouse wheel
+    Scroll {
+        /// Number of scroll clicks (negative for down/left, positive for up/right)
+        clicks: i32,
+        /// Scroll horizontally instead of vertically
+        #[arg(short, long)]
+        horizontal: bool,
+    },
+    /// Take a screenshot
+    Screenshot {
+        /// Path to save the PNG image
+        path: String,
+    },
     /// Manage the mk-daemon service
     Daemon {
         #[command(subcommand)]
@@ -140,6 +205,68 @@ enum ScheduledAction {
         /// Duration: "10s", "5m", "250ms"
         duration: String,
     },
+    /// Move mouse cursor to coordinates
+    Move {
+        /// Destination X coordinate
+        x: i32,
+        /// Destination Y coordinate
+        y: i32,
+        /// Duration of progressive slide
+        #[arg(short, long)]
+        duration: Option<String>,
+    },
+    /// Click a mouse button at coordinates
+    Click {
+        /// X coordinate
+        x: i32,
+        /// Y coordinate
+        y: i32,
+        /// Button to click
+        #[arg(short, long, default_value = "left")]
+        button: String,
+        /// Duration of progressive slide
+        #[arg(short, long)]
+        duration: Option<String>,
+    },
+    /// Drag the mouse
+    Drag {
+        /// Start X coordinate
+        x1: i32,
+        /// Start Y coordinate
+        y1: i32,
+        /// End X coordinate
+        x2: i32,
+        /// End Y coordinate
+        y2: i32,
+        /// Duration of slide
+        #[arg(short, long)]
+        duration: Option<String>,
+    },
+    /// Press and hold a mouse button
+    MouseDown {
+        /// Button to press (default: left)
+        #[arg(default_value = "left")]
+        button: String,
+    },
+    /// Release a mouse button
+    MouseUp {
+        /// Button to release (default: left)
+        #[arg(default_value = "left")]
+        button: String,
+    },
+    /// Scroll the mouse wheel
+    Scroll {
+        /// Number of scroll clicks
+        clicks: i32,
+        /// Scroll horizontally instead of vertically
+        #[arg(short, long)]
+        horizontal: bool,
+    },
+    /// Take a screenshot
+    Screenshot {
+        /// Path to save the PNG image
+        path: String,
+    },
 }
 
 impl ScheduledAction {
@@ -152,6 +279,31 @@ impl ScheduledAction {
             ScheduledAction::Wait { duration } => parser::Command::Wait(
                 parser::parse_duration(duration).unwrap_or(Duration::from_secs(0)),
             ),
+            ScheduledAction::Move { x, y, duration } => parser::Command::MouseMove(
+                x.to_string(),
+                y.to_string(),
+                duration.clone().unwrap_or_else(|| "0s".to_string())
+            ),
+            ScheduledAction::Click { x, y, button, duration } => parser::Command::MouseClick(
+                x.to_string(),
+                y.to_string(),
+                button.clone(),
+                duration.clone().unwrap_or_else(|| "0s".to_string())
+            ),
+            ScheduledAction::Drag { x1, y1, x2, y2, duration } => parser::Command::MouseDrag(
+                x1.to_string(),
+                y1.to_string(),
+                x2.to_string(),
+                y2.to_string(),
+                duration.clone().unwrap_or_else(|| "500ms".to_string())
+            ),
+            ScheduledAction::MouseDown { button } => parser::Command::MouseDown(button.clone()),
+            ScheduledAction::MouseUp { button } => parser::Command::MouseUp(button.clone()),
+            ScheduledAction::Scroll { clicks, horizontal } => parser::Command::MouseScroll(
+                clicks.to_string(),
+                horizontal.to_string()
+            ),
+            ScheduledAction::Screenshot { path } => parser::Command::Screenshot(path.clone()),
         }
     }
 }
@@ -164,11 +316,19 @@ fn main() -> Result<()> {
             return doctor::run();
         }
         Commands::Daemon { action } => {
-            return match action {
-                DaemonAction::Start => daemon_start(),
-                DaemonAction::Stop => daemon_stop(),
-                DaemonAction::Status => daemon_status(),
-            };
+            #[cfg(target_os = "linux")]
+            {
+                return match action {
+                    DaemonAction::Start => daemon_start(),
+                    DaemonAction::Stop => daemon_stop(),
+                    DaemonAction::Status => daemon_status(),
+                };
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = action;
+                bail!("Daemon operations are only supported on Linux.");
+            }
         }
         _ => {}
     }
@@ -248,12 +408,37 @@ fn main() -> Result<()> {
         Commands::PasteDir { path } => {
             interp.run(&[parser::Command::PasteDir(path)])?;
         }
+        Commands::Move { x, y, duration } => {
+            let dur = duration.unwrap_or_else(|| "0s".to_string());
+            interp.run(&[parser::Command::MouseMove(x.to_string(), y.to_string(), dur)])?;
+        }
+        Commands::Click { x, y, button, duration } => {
+            let dur = duration.unwrap_or_else(|| "0s".to_string());
+            interp.run(&[parser::Command::MouseClick(x.to_string(), y.to_string(), button, dur)])?;
+        }
+        Commands::Drag { x1, y1, x2, y2, duration } => {
+            let dur = duration.unwrap_or_else(|| "500ms".to_string());
+            interp.run(&[parser::Command::MouseDrag(x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string(), dur)])?;
+        }
+        Commands::MouseDown { button } => {
+            interp.run(&[parser::Command::MouseDown(button)])?;
+        }
+        Commands::MouseUp { button } => {
+            interp.run(&[parser::Command::MouseUp(button)])?;
+        }
+        Commands::Scroll { clicks, horizontal } => {
+            interp.run(&[parser::Command::MouseScroll(clicks.to_string(), horizontal.to_string())])?;
+        }
+        Commands::Screenshot { path } => {
+            interp.run(&[parser::Command::Screenshot(path)])?;
+        }
         Commands::Daemon { .. } | Commands::Doctor => unreachable!(),
     }
 
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn daemon_start() -> Result<()> {
     use std::process::Command;
 
@@ -283,6 +468,7 @@ fn daemon_start() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn daemon_stop() -> Result<()> {
     use std::process::Command;
 
@@ -304,6 +490,7 @@ fn daemon_stop() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn daemon_status() -> Result<()> {
     if backend::daemon::daemon_is_running() {
         println!("mk-daemon: running (socket /tmp/mk-daemon.sock)");

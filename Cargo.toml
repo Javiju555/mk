@@ -1,6 +1,6 @@
 [package]
 name = "mk"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "CLI to automate keyboard input on Linux"
 
@@ -17,4 +17,16 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 libc = "0.2"
 chrono = "0.4"
+xcap = "0.9.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging"
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+foreign-types = "0.5.0"
 
