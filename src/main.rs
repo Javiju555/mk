@@ -1,10 +1,8 @@
-mod backend;
-#[cfg(target_os = "linux")]
-mod clipboard;
-mod doctor;
-mod parser;
-mod paste;
-mod scheduler;
+use mk::backend;
+use mk::doctor;
+use mk::parser;
+use mk::scheduler;
+
 
 use anyhow::{bail, Result};
 #[cfg(target_os = "linux")]
@@ -14,8 +12,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::backend::{Backend, DryRunBackend};
-use crate::parser::{Interpreter, Logger};
+use mk::backend::{Backend, DryRunBackend};
+use mk::parser::{Interpreter, Logger};
 
 #[derive(Parser)]
 #[command(name = "mk", about = "Automate keyboard input on Linux", version)]

@@ -550,7 +550,7 @@ pub fn resolve_includes(
 pub struct Interpreter<'a> {
     backend: &'a dyn Backend,
     dry_run: bool,
-    vars: HashMap<String, String>,
+    pub vars: HashMap<String, String>,
     logger: Option<&'a mut Logger>,
 }
 
