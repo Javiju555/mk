@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-use crate::backend::Backend;
-use crate::paste;
+use crate::input::Backend;
+use crate::output::paste;
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -806,7 +806,7 @@ impl<'a> Interpreter<'a> {
                 if self.dry_run {
                     println!("[dry-run] take_screenshot: save to {path_clean}");
                 } else {
-                    self.backend.take_screenshot(path_clean)?;
+                    crate::vision::capture_screen(path_clean)?;
                 }
                 self.log_action("screenshot", path_clean, "ok")?;
             }

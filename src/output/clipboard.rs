@@ -1,4 +1,4 @@
-use crate::backend::DisplayServer;
+use crate::input::DisplayServer;
 use std::process::Command;
 
 fn command_exists(name: &str) -> bool {

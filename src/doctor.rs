@@ -1,12 +1,12 @@
-use crate::backend;
+use crate::input;
 #[cfg(target_os = "linux")]
-use crate::clipboard;
+use crate::output::clipboard;
 use anyhow::Result;
 
 pub fn run() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        let server = backend::detect_display_server();
+        let server = input::detect_display_server();
         let clipboard_tool = clipboard::detect_clipboard_tool(server);
 
         println!("mk doctor — diagnostics\n");
@@ -40,7 +40,7 @@ pub fn run() -> Result<()> {
         check_tool("xclip");
         check_tool("xsel");
 
-        println!("\nDetected backend: {}", match backend::detect_backend() {
+        println!("\nDetected backend: {}", match input::detect_backend() {
             Ok(b) => b.display_name().to_string(),
             Err(e) => format!("error: {e}"),
         });
@@ -54,13 +54,13 @@ pub fn run() -> Result<()> {
 
         println!("\nRecommendations (pacman -S):");
         match server {
-            backend::DisplayServer::Wayland => {
+            input::DisplayServer::Wayland => {
                 println!("  sudo pacman -S wtype wl-clipboard");
                 if !tool_exists("ydotool") {
                     println!("  # optional: sudo pacman -S ydotool");
                 }
             }
-            backend::DisplayServer::X11 => {
+            input::DisplayServer::X11 => {
                 println!("  sudo pacman -S xdotool xclip");
                 if !tool_exists("wtype") {
                     println!("  # optional: sudo pacman -S wtype");
@@ -76,7 +76,7 @@ pub fn run() -> Result<()> {
         println!("  System Local Time: {}", chrono::Local::now());
         println!("  System UTC Time:   {}", chrono::Utc::now());
 
-        println!("\nDetected backend: {}", match backend::detect_backend() {
+        println!("\nDetected backend: {}", match input::detect_backend() {
             Ok(b) => b.display_name().to_string(),
             Err(e) => format!("error: {e}"),
         });

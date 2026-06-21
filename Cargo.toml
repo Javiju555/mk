@@ -24,6 +24,9 @@ anyhow = "1"
 libc = "0.2"
 chrono = "0.4"
 xcap = "0.9.6"
+image = "0.25"
+serde = { version = "1", features = ["derive"] }
+
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.52", features = [

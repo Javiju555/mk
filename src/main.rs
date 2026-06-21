@@ -1,4 +1,4 @@
-use mk::backend;
+use mk::input;
 use mk::doctor;
 use mk::parser;
 use mk::scheduler;
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-use mk::backend::{Backend, DryRunBackend};
+use mk::input::{Backend, DryRunBackend};
 use mk::parser::{Interpreter, Logger};
 
 #[derive(Parser)]
@@ -331,7 +331,7 @@ fn main() -> Result<()> {
         _ => {}
     }
 
-    let real_backend = backend::detect_backend()?;
+    let real_backend = input::detect_backend()?;
 
     let backend: Box<dyn Backend> = if cli.dry_run {
         Box::new(DryRunBackend)
@@ -441,7 +441,7 @@ fn daemon_start() -> Result<()> {
     use std::process::Command;
 
     // Check if already running
-    if backend::daemon::daemon_is_running() {
+    if input::daemon::daemon_is_running() {
         println!("mk-daemon is already running.");
         return Ok(());
     }
@@ -490,9 +490,9 @@ fn daemon_stop() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn daemon_status() -> Result<()> {
-    if backend::daemon::daemon_is_running() {
+    if input::daemon::daemon_is_running() {
         println!("mk-daemon: running (socket /tmp/mk-daemon.sock)");
-        match backend::daemon::ping_daemon() {
+        match input::daemon::ping_daemon() {
             Ok(()) => println!("  Response: OK"),
             Err(e) => println!("  Ping failed: {e}"),
         }

@@ -13,13 +13,13 @@ pub mod windows;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
-use anyhow::{bail, Result, Context};
+use anyhow::{bail, Result};
 #[cfg(target_os = "linux")]
 use std::fmt;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
-pub trait Backend {
+pub trait InputBackend {
     fn type_text(&self, text: &str) -> Result<()>;
     fn press_key(&self, key: &str) -> Result<()>;
     fn display_name(&self) -> &str;
@@ -42,14 +42,9 @@ pub trait Backend {
     fn mouse_scroll(&self, _clicks: i32, _horizontal: bool) -> Result<()> {
         bail!("Mouse operations are not supported by the {} backend. Please use the daemon backend.", self.display_name())
     }
-    fn take_screenshot(&self, path: &str) -> Result<()> {
-        let monitors = xcap::Monitor::all().map_err(|e| anyhow::anyhow!("Failed to list monitors: {e}"))?;
-        let monitor = monitors.first().context("No monitors found")?;
-        let image = monitor.capture_image().map_err(|e| anyhow::anyhow!("Failed to capture screen: {e}"))?;
-        image.save(path).context("Failed to save screenshot image")?;
-        Ok(())
-    }
 }
+
+pub use InputBackend as Backend;
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +88,7 @@ pub fn detect_display_server() -> DisplayServer {
     DisplayServer::X11
 }
 
-pub fn detect_backend() -> Result<Box<dyn Backend>> {
+pub fn detect_backend() -> Result<Box<dyn InputBackend>> {
     #[cfg(target_os = "linux")]
     {
         // Prefer daemon if running
@@ -148,7 +143,7 @@ pub fn detect_backend() -> Result<Box<dyn Backend>> {
 
 pub struct DryRunBackend;
 
-impl Backend for DryRunBackend {
+impl InputBackend for DryRunBackend {
     fn type_text(&self, text: &str) -> Result<()> {
         println!("[dry-run] type_text: \"{text}\"");
         Ok(())
@@ -190,11 +185,6 @@ impl Backend for DryRunBackend {
 
     fn mouse_scroll(&self, clicks: i32, horizontal: bool) -> Result<()> {
         println!("[dry-run] mouse_scroll: clicks {clicks}, horizontal {horizontal}");
-        Ok(())
-    }
-
-    fn take_screenshot(&self, path: &str) -> Result<()> {
-        println!("[dry-run] take_screenshot: save to {path}");
         Ok(())
     }
 }

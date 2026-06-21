@@ -1,8 +1,8 @@
 #[cfg(target_os = "linux")]
-use crate::backend;
-use crate::backend::Backend;
+use crate::input;
+use crate::input::Backend;
 #[cfg(target_os = "linux")]
-use crate::clipboard;
+use super::clipboard;
 #[cfg(target_os = "linux")]
 use anyhow::bail;
 use anyhow::Result;
@@ -12,7 +12,7 @@ use std::process::Command;
 pub fn paste(text: &str, shortcut: &str, backend: &dyn Backend) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        let server = backend::detect_display_server();
+        let server = input::detect_display_server();
         let tool = clipboard::detect_clipboard_tool(server);
 
         match tool {

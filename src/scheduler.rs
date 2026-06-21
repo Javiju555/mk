@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 use chrono::Timelike;
 
-use crate::backend::Backend;
+use crate::input::Backend;
 
 pub fn delay_until_time(time_str: &str) -> Result<Duration> {
     let time_str = time_str.trim();
@@ -48,7 +48,7 @@ pub fn delay_until_time(time_str: &str) -> Result<Duration> {
 pub fn keep_awake_background(interval: Duration, key: String) {
     println!("Keep-awake background process active: pressing {key} every {interval:?}.");
     std::thread::spawn(move || {
-        if let Ok(backend) = crate::backend::detect_backend() {
+        if let Ok(backend) = crate::input::detect_backend() {
             loop {
                 let _ = backend.press_key(&key);
                 std::thread::sleep(interval);

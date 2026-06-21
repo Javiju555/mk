@@ -1,7 +1,9 @@
-pub mod backend;
-#[cfg(target_os = "linux")]
-pub mod clipboard;
+pub mod input;
+pub mod output;
+pub mod vision;
+pub mod windows;
+pub mod accessibility;
+
 pub mod doctor;
 pub mod parser;
-pub mod paste;
 pub mod scheduler;
