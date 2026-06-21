@@ -2,7 +2,8 @@
 name = "mk"
 version = "0.5.0"
 edition = "2024"
-description = "CLI to automate keyboard input on Linux"
+description = "CLI to automate keyboard input on Linux, Windows and macOS"
+license = "MIT"
 
 [[bin]]
 name = "mk"
