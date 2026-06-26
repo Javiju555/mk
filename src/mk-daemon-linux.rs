@@ -612,6 +612,24 @@ fn button_to_keycode(btn: &str) -> Option<u16> {
     }
 }
 
+fn unescape_text(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('\\') => result.push('\\'),
+                Some(other) => { result.push('\\'); result.push(other); }
+                None => result.push('\\'),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 fn handle_client(mut stream: UnixStream, device: Arc<Mutex<UinputDevice>>) {
     std::thread::spawn(move || {
         let mut buffer = [0u8; 4096];
@@ -620,15 +638,20 @@ fn handle_client(mut stream: UnixStream, device: Arc<Mutex<UinputDevice>>) {
                 Ok(0) => break,
                 Ok(n) => {
                     let msg = String::from_utf8_lossy(&buffer[..n]);
-                    let msg = msg.trim();
+                    // Only strip trailing newline(s) used as protocol delimiter.
+                    // Using trim() here would eat leading whitespace and embedded
+                    // newlines from text content — use trim_end instead.
+                    let msg = msg.trim_end_matches(|c: char| c == '\n' || c == '\r');
 
                     let response = {
                         let mut dev = device.lock().unwrap();
                         match msg {
                             "PING" => "OK".to_string(),
                             text if text.starts_with("TYPE:") => {
-                                let text = &text[5..];
-                                match dev.type_text(text) {
+                                let raw = &text[5..];
+                                // Client escapes \n→\\n and \\→\\\\ before sending.
+                                let text = unescape_text(raw);
+                                match dev.type_text(&text) {
                                     Ok(()) => "OK".to_string(),
                                     Err(e) => format!("ERR:{e}"),
                                 }

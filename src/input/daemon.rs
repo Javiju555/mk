@@ -29,7 +29,14 @@ pub struct DaemonBackend;
 impl Backend for DaemonBackend {
     fn type_text(&self, text: &str) -> Result<()> {
         let mut stream = connect()?;
-        send_command(&mut stream, &format!("TYPE:{text}"))?;
+        // Escape backslashes and newlines: the protocol uses \n as message
+        // delimiter, so embedded newlines must be sent as the two-char sequence \n.
+        let escaped: String = text.chars().flat_map(|c| match c {
+            '\\' => vec!['\\', '\\'],
+            '\n' => vec!['\\', 'n'],
+            c => vec![c],
+        }).collect();
+        send_command(&mut stream, &format!("TYPE:{escaped}"))?;
         Ok(())
     }
 
