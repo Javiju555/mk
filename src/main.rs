@@ -164,6 +164,24 @@ enum Commands {
     },
     /// Check system dependencies and display diagnostics
     Doctor,
+    /// List, inspect, or focus on-screen windows
+    Window {
+        #[command(subcommand)]
+        action: WindowAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum WindowAction {
+    /// List all on-screen windows (JSON): id, title, app, geometry, is_active
+    List,
+    /// Print the currently focused window as JSON
+    Active,
+    /// Raise a window to the foreground by its id (best-effort, per-OS)
+    Focus {
+        /// Window id (as reported by `mk window list`)
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -313,6 +331,9 @@ fn main() -> Result<()> {
         Commands::Doctor => {
             return doctor::run();
         }
+        Commands::Window { action } => {
+            return handle_window(action);
+        }
         Commands::Daemon { action } => {
             #[cfg(target_os = "linux")]
             {
@@ -430,9 +451,30 @@ fn main() -> Result<()> {
         Commands::Screenshot { path } => {
             interp.run(&[parser::Command::Screenshot(path)])?;
         }
-        Commands::Daemon { .. } | Commands::Doctor => unreachable!(),
+        Commands::Daemon { .. } | Commands::Doctor | Commands::Window { .. } => unreachable!(),
     }
 
+    Ok(())
+}
+
+/// Handle `mk window {list,active,focus}` — printing JSON for list/active so
+/// the output is machine-consumable (e.g. by an agent picking a click target).
+fn handle_window(action: WindowAction) -> Result<()> {
+    use mk::windows;
+    match action {
+        WindowAction::List => {
+            let list = windows::list_windows()?;
+            println!("{}", serde_json::to_string_pretty(&list)?);
+        }
+        WindowAction::Active => {
+            let active = windows::active_window()?;
+            println!("{}", serde_json::to_string_pretty(&active)?);
+        }
+        WindowAction::Focus { id } => {
+            windows::focus_window(&id)?;
+            println!("Focused window {id}");
+        }
+    }
     Ok(())
 }
 

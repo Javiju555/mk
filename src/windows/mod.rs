@@ -14,23 +14,34 @@ pub struct WindowInfo {
     pub is_active: bool,
 }
 
+impl WindowInfo {
+    /// Center point of the window — the natural target for a `mk click` that
+    /// wants to focus/raise this window by clicking its body.
+    pub fn center(&self) -> (i32, i32) {
+        (
+            self.x + (self.width as i32) / 2,
+            self.y + (self.height as i32) / 2,
+        )
+    }
+}
+
+// ── Platform-specific focus (raising a window to the foreground) ────────────
+//
+// Enumeration + geometry + focused-state come from `xcap` (cross-platform,
+// below). Only *changing* focus needs per-OS native calls, and only that is
+// specialized here.
+
 #[cfg(target_os = "windows")]
 mod os_impl {
     use anyhow::{bail, Result};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow, ShowWindow, SW_RESTORE};
-
-    pub fn get_active_window_id() -> Result<u32> {
-        unsafe {
-            let hwnd = GetForegroundWindow();
-            if hwnd == 0 {
-                bail!("No active window found");
-            }
-            Ok(hwnd as u32)
-        }
-    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
 
     pub fn focus_window(window_id: &str) -> Result<()> {
-        let hwnd_val: u32 = window_id.parse().map_err(|e| anyhow::anyhow!("Invalid window ID: {e}"))?;
+        let hwnd_val: u32 = window_id
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid window ID: {e}"))?;
         unsafe {
             let hwnd = hwnd_val as windows_sys::Win32::Foundation::HWND;
             ShowWindow(hwnd, SW_RESTORE);
@@ -47,29 +58,40 @@ mod os_impl {
     use anyhow::{bail, Result};
     use std::process::Command;
 
-    pub fn get_active_window_id() -> Result<u32> {
-        let output = Command::new("xdotool")
-            .arg("getactivewindow")
-            .output();
-        if let Ok(out) = output {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout);
-                if let Ok(id) = s.trim().parse::<u32>() {
-                    return Ok(id);
-                }
-            }
-        }
-        bail!("Could not detect active window ID on Linux (requires xdotool)")
+    /// True when the current Linux session is Wayland (as opposed to X11).
+    fn is_wayland() -> bool {
+        std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false)
     }
 
     pub fn focus_window(window_id: &str) -> Result<()> {
+        // Wayland deliberately forbids a client from raising an arbitrary other
+        // window by id — the compositor is the sole focus authority. There is
+        // no DE-independent syscall for this on Wayland. Be honest instead of
+        // shelling out to xdotool (X11-only, and typically absent on Wayland).
+        if is_wayland() {
+            bail!(
+                "focus-by-id is not supported on Wayland: the compositor owns \
+                 window focus and exposes no generic protocol for it. Use input \
+                 simulation instead (e.g. `mk key alt+tab`, or click the window's \
+                 body via `mk window list` → center coords), or a compositor \
+                 backend (hyprctl/swaymsg/kwin). See docs/window-control.md."
+            );
+        }
+        // X11 path — no external tool if xdotool is missing; report clearly.
         let status = Command::new("xdotool")
             .arg("windowactivate")
             .arg(window_id)
             .status();
         match status {
             Ok(s) if s.success() => Ok(()),
-            _ => bail!("Failed to focus window using xdotool"),
+            Ok(_) => bail!("xdotool windowactivate failed for id {window_id}"),
+            Err(_) => bail!(
+                "cannot focus window on X11: xdotool not found. Install it, or \
+                 use input simulation. See docs/window-control.md."
+            ),
         }
     }
 }
@@ -79,17 +101,9 @@ mod os_impl {
     use anyhow::{bail, Result};
     use std::process::Command;
 
-    #[allow(dead_code)]
-    pub fn get_active_window_id() -> Result<u32> {
-        // Return 0 placeholder, frontmost application is matched by app_name
-        Ok(0)
-    }
-
     pub fn focus_window(app_name: &str) -> Result<()> {
         let script = format!("activate application \"{}\"", app_name);
-        let status = Command::new("osascript")
-            .args(&["-e", &script])
-            .status();
+        let status = Command::new("osascript").args(["-e", &script]).status();
         match status {
             Ok(s) if s.success() => Ok(()),
             _ => bail!("Failed to activate application via AppleScript"),
@@ -100,63 +114,33 @@ mod os_impl {
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 mod os_impl {
     use anyhow::{bail, Result};
-    pub fn get_active_window_id() -> Result<u32> {
-        bail!("Platform not supported")
-    }
     pub fn focus_window(_window_id: &str) -> Result<()> {
         bail!("Platform not supported")
     }
 }
 
+/// Enumerate all on-screen windows with geometry and focused state.
+///
+/// Enumeration and the `is_active` flag come from `xcap`'s native
+/// `Window::is_focused()` — no external tools (xdotool/wmctrl) and no
+/// dependency on a specific desktop environment for *detection*. Note: on a
+/// Linux Wayland session xcap enumerates via XCB (XWayland), so Wayland-native
+/// windows may be invisible here — see docs/window-control.md.
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
     let windows = Window::all().map_err(|e| anyhow::anyhow!("Failed to list windows: {e}"))?;
-    #[cfg(not(target_os = "macos"))]
-    let active_id = os_impl::get_active_window_id().ok();
-    
-    #[cfg(target_os = "macos")]
-    let frontmost_app = get_macos_frontmost_app().ok();
 
     let mut list = Vec::new();
     for w in windows {
-        let w_id = match w.id() {
-            Ok(id) => id,
-            Err(_) => continue,
+        let (Ok(w_id), Ok(w_title), Ok(w_app_name)) = (w.id(), w.title(), w.app_name()) else {
+            continue;
         };
-        let w_title = match w.title() {
-            Ok(title) => title,
-            Err(_) => continue,
+        let (Ok(w_x), Ok(w_y), Ok(w_width), Ok(w_height)) =
+            (w.x(), w.y(), w.width(), w.height())
+        else {
+            continue;
         };
-        let w_app_name = match w.app_name() {
-            Ok(app_name) => app_name,
-            Err(_) => continue,
-        };
-        let w_x = match w.x() {
-            Ok(x) => x,
-            Err(_) => continue,
-        };
-        let w_y = match w.y() {
-            Ok(y) => y,
-            Err(_) => continue,
-        };
-        let w_width = match w.width() {
-            Ok(width) => width,
-            Err(_) => continue,
-        };
-        let w_height = match w.height() {
-            Ok(height) => height,
-            Err(_) => continue,
-        };
-
-        let is_active = {
-            #[cfg(target_os = "macos")]
-            {
-                frontmost_app.as_deref() == Some(&w_app_name)
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                active_id.map_or(false, |id| id == w_id)
-            }
-        };
+        // Native focused-state; degrade to false if the backend can't tell.
+        let is_active = w.is_focused().unwrap_or(false);
 
         list.push(WindowInfo {
             id: w_id.to_string(),
@@ -172,13 +156,15 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
     Ok(list)
 }
 
+/// The currently focused window, if any backend can report it.
 pub fn active_window() -> Result<WindowInfo> {
     let list = list_windows()?;
     list.into_iter()
         .find(|w| w.is_active)
-        .context("No active window found")
+        .context("No active window reported (backend may not expose focus on this session)")
 }
 
+/// Raise the window with the given id to the foreground (best-effort, per-OS).
 pub fn focus_window(window_id: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -195,27 +181,29 @@ pub fn focus_window(window_id: &str) -> Result<()> {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn get_macos_frontmost_app() -> Result<String> {
-    use std::process::Command;
-    let output = Command::new("osascript")
-        .args(&["-e", "tell application \"System Events\" to get name of first application process whose frontmost is true"])
-        .output()?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        anyhow::bail!("AppleScript failed")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_list_windows() {
-        // Listing windows should run without errors (even if no GUI window is present, it will return empty list or find terminals)
+    fn test_list_windows_runs() {
+        // Must not error even in headless/odd sessions (may return an empty list).
         let list = list_windows();
         assert!(list.is_ok());
+    }
+
+    #[test]
+    fn test_center_is_midpoint() {
+        let w = WindowInfo {
+            id: "1".into(),
+            title: "t".into(),
+            app_name: "a".into(),
+            x: 100,
+            y: 200,
+            width: 400,
+            height: 300,
+            is_active: false,
+        };
+        assert_eq!(w.center(), (300, 350));
     }
 }

@@ -52,6 +52,8 @@ pub fn run() -> Result<()> {
             clipboard::ClipboardTool::None => "none",
         });
 
+        print_window_control();
+
         println!("\nRecommendations (pacman -S):");
         match server {
             input::DisplayServer::Wayland => {
@@ -80,9 +82,64 @@ pub fn run() -> Result<()> {
             Ok(b) => b.display_name().to_string(),
             Err(e) => format!("error: {e}"),
         });
+
+        print_window_control();
     }
 
     Ok(())
+}
+
+/// Report the window-control capability of the current session so callers
+/// (e.g. an AI agent) can plan instead of failing by trial-and-error.
+/// See docs/window-control.md for the full matrix and rationale.
+fn print_window_control() {
+    println!("\nWindow control:");
+
+    // Empirical: how many windows can we actually enumerate right now?
+    let visible = crate::windows::list_windows().map(|w| w.len());
+
+    #[cfg(target_os = "linux")]
+    {
+        let wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false);
+        if wayland {
+            println!("  backend: wayland (compositor-owned)");
+            println!("  [✗] enumerate/focus foreign windows — not exposed by Wayland");
+            println!("  [✓] input simulation (mk key/click/move) — use `mk key alt+tab` / overview");
+            match visible {
+                Ok(n) => println!(
+                    "  xcb(XWayland) sees {n} window(s) — Wayland-native apps are invisible here"
+                ),
+                Err(e) => println!("  window enumeration error: {e}"),
+            }
+        } else {
+            println!("  backend: x11 (xcb/EWMH)");
+            println!("  [✓] enumerate/focus windows (X11 apps)");
+            if let Ok(n) = visible {
+                println!("  enumerated {n} window(s)");
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        println!("  backend: win32 (native)");
+        println!("  [✓] enumerate/focus/move windows");
+        if let Ok(n) = visible {
+            println!("  enumerated {n} window(s)");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        println!("  backend: CoreGraphics + Accessibility");
+        println!("  [✓] enumerate/focus windows (AX permission required)");
+        if let Ok(n) = visible {
+            println!("  enumerated {n} window(s)");
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
