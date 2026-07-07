@@ -26,27 +26,83 @@ impl WindowInfo {
 }
 
 // ── Platform-specific focus (raising a window to the foreground) ────────────
-//
-// Enumeration + geometry + focused-state come from `xcap` (cross-platform,
-// below). Only *changing* focus needs per-OS native calls, and only that is
-// specialized here.
 
 #[cfg(target_os = "windows")]
 mod os_impl {
     use anyhow::{bail, Result};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetForegroundWindow, ShowWindow, SW_RESTORE,
+        SetForegroundWindow, ShowWindow, SetWindowPos, PostMessageW,
+        SW_RESTORE, SW_MINIMIZE, SW_MAXIMIZE, WM_CLOSE,
+        SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE,
     };
 
-    pub fn focus_window(window_id: &str) -> Result<()> {
-        let hwnd_val: u32 = window_id
+    fn parse_hwnd(window_id: &str) -> Result<windows_sys::Win32::Foundation::HWND> {
+        let hwnd_val: usize = window_id
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid window ID: {e}"))?;
+        Ok(hwnd_val as windows_sys::Win32::Foundation::HWND)
+    }
+
+    pub fn focus_window(window_id: &str) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
         unsafe {
-            let hwnd = hwnd_val as windows_sys::Win32::Foundation::HWND;
             ShowWindow(hwnd, SW_RESTORE);
             if SetForegroundWindow(hwnd) == 0 {
                 bail!("Failed to set foreground window");
+            }
+            Ok(())
+        }
+    }
+
+    pub fn move_window(window_id: &str, x: i32, y: i32) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
+        unsafe {
+            if SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) == 0 {
+                bail!("Failed to move window");
+            }
+            Ok(())
+        }
+    }
+
+    pub fn resize_window(window_id: &str, width: u32, height: u32) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
+        unsafe {
+            if SetWindowPos(hwnd, 0, 0, 0, width as i32, height as i32, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) == 0 {
+                bail!("Failed to resize window");
+            }
+            Ok(())
+        }
+    }
+
+    pub fn minimize_window(window_id: &str) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
+        unsafe {
+            ShowWindow(hwnd, SW_MINIMIZE);
+            Ok(())
+        }
+    }
+
+    pub fn maximize_window(window_id: &str) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
+        unsafe {
+            ShowWindow(hwnd, SW_MAXIMIZE);
+            Ok(())
+        }
+    }
+
+    pub fn restore_window(window_id: &str) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
+        unsafe {
+            ShowWindow(hwnd, SW_RESTORE);
+            Ok(())
+        }
+    }
+
+    pub fn close_window(window_id: &str) -> Result<()> {
+        let hwnd = parse_hwnd(window_id)?;
+        unsafe {
+            if PostMessageW(hwnd, WM_CLOSE, 0, 0) == 0 {
+                bail!("Failed to post WM_CLOSE message to window");
             }
             Ok(())
         }
@@ -66,21 +122,20 @@ mod os_impl {
                 .unwrap_or(false)
     }
 
-    pub fn focus_window(window_id: &str) -> Result<()> {
-        // Wayland deliberately forbids a client from raising an arbitrary other
-        // window by id — the compositor is the sole focus authority. There is
-        // no DE-independent syscall for this on Wayland. Be honest instead of
-        // shelling out to xdotool (X11-only, and typically absent on Wayland).
+    fn check_wayland_unsupported(op_name: &str) -> Result<()> {
         if is_wayland() {
             bail!(
-                "focus-by-id is not supported on Wayland: the compositor owns \
-                 window focus and exposes no generic protocol for it. Use input \
-                 simulation instead (e.g. `mk key alt+tab`, or click the window's \
-                 body via `mk window list` → center coords), or a compositor \
-                 backend (hyprctl/swaymsg/kwin). See docs/window-control.md."
+                "{op_name}-by-id is not supported on Wayland: the compositor owns \
+                 window management and exposes no generic protocol for it. \
+                 Use input simulation or a compositor backend (hyprctl/swaymsg/kwin). \
+                 See docs/window-control.md."
             );
         }
-        // X11 path — no external tool if xdotool is missing; report clearly.
+        Ok(())
+    }
+
+    pub fn focus_window(window_id: &str) -> Result<()> {
+        check_wayland_unsupported("focus")?;
         let status = Command::new("xdotool")
             .arg("windowactivate")
             .arg(window_id)
@@ -94,6 +149,78 @@ mod os_impl {
             ),
         }
     }
+
+    pub fn move_window(window_id: &str, x: i32, y: i32) -> Result<()> {
+        check_wayland_unsupported("move")?;
+        let status = Command::new("xdotool")
+            .args(["windowmove", window_id, &x.to_string(), &y.to_string()])
+            .status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => bail!("xdotool windowmove failed for id {window_id}"),
+            Err(_) => bail!("cannot move window on X11: xdotool not found."),
+        }
+    }
+
+    pub fn resize_window(window_id: &str, width: u32, height: u32) -> Result<()> {
+        check_wayland_unsupported("resize")?;
+        let status = Command::new("xdotool")
+            .args(["windowsize", window_id, &width.to_string(), &height.to_string()])
+            .status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => bail!("xdotool windowsize failed for id {window_id}"),
+            Err(_) => bail!("cannot resize window on X11: xdotool not found."),
+        }
+    }
+
+    pub fn minimize_window(window_id: &str) -> Result<()> {
+        check_wayland_unsupported("minimize")?;
+        let status = Command::new("xdotool")
+            .args(["windowminimize", window_id])
+            .status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => bail!("xdotool windowminimize failed for id {window_id}"),
+            Err(_) => bail!("cannot minimize window on X11: xdotool not found."),
+        }
+    }
+
+    pub fn maximize_window(window_id: &str) -> Result<()> {
+        check_wayland_unsupported("maximize")?;
+        let status = Command::new("wmctrl")
+            .args(["-ir", window_id, "-b", "add,maximized_vert,maximized_horz"])
+            .status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => bail!("wmctrl maximize failed for id {window_id}"),
+            Err(_) => bail!("cannot maximize window on X11: wmctrl not found."),
+        }
+    }
+
+    pub fn restore_window(window_id: &str) -> Result<()> {
+        check_wayland_unsupported("restore")?;
+        let status = Command::new("wmctrl")
+            .args(["-ir", window_id, "-b", "remove,maximized_vert,maximized_horz"])
+            .status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => bail!("wmctrl restore failed for id {window_id}"),
+            Err(_) => bail!("cannot restore window on X11: wmctrl not found."),
+        }
+    }
+
+    pub fn close_window(window_id: &str) -> Result<()> {
+        check_wayland_unsupported("close")?;
+        let status = Command::new("xdotool")
+            .args(["windowclose", window_id])
+            .status();
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => bail!("xdotool windowclose failed for id {window_id}"),
+            Err(_) => bail!("cannot close window on X11: xdotool not found."),
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -101,13 +228,173 @@ mod os_impl {
     use anyhow::{bail, Result};
     use std::process::Command;
 
-    pub fn focus_window(app_name: &str) -> Result<()> {
-        let script = format!("activate application \"{}\"", app_name);
-        let status = Command::new("osascript").args(["-e", &script]).status();
-        match status {
-            Ok(s) if s.success() => Ok(()),
-            _ => bail!("Failed to activate application via AppleScript"),
+    fn run_applescript(script: &str) -> Result<()> {
+        let status = Command::new("osascript").args(["-e", script]).status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            bail!("AppleScript execution failed")
         }
+    }
+
+    fn escape(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    pub fn focus_window(app_name: &str, title: &str) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"System Events\"\n\
+             tell process \"{app}\"\n\
+             set frontmost to true\n\
+             try\n\
+             perform action \"AXRaise\" of (first window whose name is \"{title_esc}\")\n\
+             on error\n\
+             try\n\
+             perform action \"AXRaise\" of (first window whose name contains \"{title_esc}\")\n\
+             on error\n\
+             perform action \"AXRaise\" of window 1\n\
+             end try\n\
+             end try\n\
+             end tell\n\
+             end tell\n\
+             tell application \"{app}\" to activate"
+        );
+        run_applescript(&script)
+    }
+
+    pub fn move_window(app_name: &str, title: &str, x: i32, y: i32) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"System Events\"\n\
+             tell process \"{app}\"\n\
+             try\n\
+             set position of (first window whose name is \"{title_esc}\") to {{ {x}, {y} }}\n\
+             on error\n\
+             try\n\
+             set position of (first window whose name contains \"{title_esc}\") to {{ {x}, {y} }}\n\
+             on error\n\
+             set position of window 1 to {{ {x}, {y} }}\n\
+             end try\n\
+             end try\n\
+             end tell\n\
+             end tell"
+        );
+        run_applescript(&script)
+    }
+
+    pub fn resize_window(app_name: &str, title: &str, width: u32, height: u32) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"System Events\"\n\
+             tell process \"{app}\"\n\
+             try\n\
+             set size of (first window whose name is \"{title_esc}\") to {{ {width}, {height} }}\n\
+             on error\n\
+             try\n\
+             set size of (first window whose name contains \"{title_esc}\") to {{ {width}, {height} }}\n\
+             on error\n\
+             set size of window 1 to {{ {width}, {height} }}\n\
+             end try\n\
+             end try\n\
+             end tell\n\
+             end tell"
+        );
+        run_applescript(&script)
+    }
+
+    pub fn minimize_window(app_name: &str, title: &str) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"System Events\"\n\
+             tell process \"{app}\"\n\
+             try\n\
+             set value of attribute \"AXMinimized\" of (first window whose name is \"{title_esc}\") to true\n\
+             on error\n\
+             try\n\
+             set value of attribute \"AXMinimized\" of (first window whose name contains \"{title_esc}\") to true\n\
+             on error\n\
+             set value of attribute \"AXMinimized\" of window 1 to true\n\
+             end try\n\
+             end try\n\
+             end tell\n\
+             end tell"
+        );
+        run_applescript(&script)
+    }
+
+    pub fn maximize_window(app_name: &str, title: &str) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"System Events\"\n\
+             tell process \"{app}\"\n\
+             try\n\
+             set value of attribute \"AXZoomed\" of (first window whose name is \"{title_esc}\") to true\n\
+             on error\n\
+             try\n\
+             set value of attribute \"AXZoomed\" of (first window whose name contains \"{title_esc}\") to true\n\
+             on error\n\
+             set value of attribute \"AXZoomed\" of window 1 to true\n\
+             end try\n\
+             end try\n\
+             end tell\n\
+             end tell"
+        );
+        run_applescript(&script)
+    }
+
+    pub fn restore_window(app_name: &str, title: &str) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"System Events\"\n\
+             tell process \"{app}\"\n\
+             try\n\
+             set value of attribute \"AXMinimized\" of (first window whose name is \"{title_esc}\") to false\n\
+             on error\n\
+             try\n\
+             set value of attribute \"AXMinimized\" of (first window whose name contains \"{title_esc}\") to false\n\
+             on error\n\
+             set value of attribute \"AXMinimized\" of window 1 to false\n\
+             end try\n\
+             end try\n\
+             try\n\
+             set value of attribute \"AXZoomed\" of (first window whose name is \"{title_esc}\") to false\n\
+             on error\n\
+             try\n\
+             set value of attribute \"AXZoomed\" of (first window whose name contains \"{title_esc}\") to false\n\
+             on error\n\
+             set value of attribute \"AXZoomed\" of window 1 to false\n\
+             end try\n\
+             end try\n\
+             end tell\n\
+             end tell"
+        );
+        run_applescript(&script)
+    }
+
+    pub fn close_window(app_name: &str, title: &str) -> Result<()> {
+        let app = escape(app_name);
+        let title_esc = escape(title);
+        let script = format!(
+            "tell application \"{app}\"\n\
+             try\n\
+             close (first window whose name is \"{title_esc}\")\n\
+             on error\n\
+             try\n\
+             close (first window whose name contains \"{title_esc}\")\n\
+             on error\n\
+             close window 1\n\
+             end try\n\
+             end try\n\
+             end tell"
+        );
+        run_applescript(&script)
     }
 }
 
@@ -117,15 +404,27 @@ mod os_impl {
     pub fn focus_window(_window_id: &str) -> Result<()> {
         bail!("Platform not supported")
     }
+    pub fn move_window(_window_id: &str, _x: i32, _y: i32) -> Result<()> {
+        bail!("Platform not supported")
+    }
+    pub fn resize_window(_window_id: &str, _width: u32, _height: u32) -> Result<()> {
+        bail!("Platform not supported")
+    }
+    pub fn minimize_window(_window_id: &str) -> Result<()> {
+        bail!("Platform not supported")
+    }
+    pub fn maximize_window(_window_id: &str) -> Result<()> {
+        bail!("Platform not supported")
+    }
+    pub fn restore_window(_window_id: &str) -> Result<()> {
+        bail!("Platform not supported")
+    }
+    pub fn close_window(_window_id: &str) -> Result<()> {
+        bail!("Platform not supported")
+    }
 }
 
 /// Enumerate all on-screen windows with geometry and focused state.
-///
-/// Enumeration and the `is_active` flag come from `xcap`'s native
-/// `Window::is_focused()` — no external tools (xdotool/wmctrl) and no
-/// dependency on a specific desktop environment for *detection*. Note: on a
-/// Linux Wayland session xcap enumerates via XCB (XWayland), so Wayland-native
-/// windows may be invisible here — see docs/window-control.md.
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
     let windows = Window::all().map_err(|e| anyhow::anyhow!("Failed to list windows: {e}"))?;
 
@@ -164,20 +463,110 @@ pub fn active_window() -> Result<WindowInfo> {
         .context("No active window reported (backend may not expose focus on this session)")
 }
 
+/// Helper to find a window by its ID and return a clone of WindowInfo.
+#[allow(dead_code)]
+fn find_window(window_id: &str) -> Result<WindowInfo> {
+    let list = list_windows()?;
+    list.into_iter()
+        .find(|w| w.id == window_id)
+        .ok_or_else(|| anyhow::anyhow!("Window with ID {window_id} not found"))
+}
+
 /// Raise the window with the given id to the foreground (best-effort, per-OS).
 pub fn focus_window(window_id: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
-        let list = list_windows()?;
-        if let Some(w) = list.iter().find(|w| w.id == window_id) {
-            return os_impl::focus_window(&w.app_name);
-        }
-        anyhow::bail!("Window not found")
+        let w = find_window(window_id)?;
+        os_impl::focus_window(&w.app_name, &w.title)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         os_impl::focus_window(window_id)
+    }
+}
+
+/// Move the window to the specified coordinates.
+pub fn move_window(window_id: &str, x: i32, y: i32) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let w = find_window(window_id)?;
+        os_impl::move_window(&w.app_name, &w.title, x, y)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        os_impl::move_window(window_id, x, y)
+    }
+}
+
+/// Resize the window to the specified width and height.
+pub fn resize_window(window_id: &str, width: u32, height: u32) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let w = find_window(window_id)?;
+        os_impl::resize_window(&w.app_name, &w.title, width, height)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        os_impl::resize_window(window_id, width, height)
+    }
+}
+
+/// Minimize the window.
+pub fn minimize_window(window_id: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let w = find_window(window_id)?;
+        os_impl::minimize_window(&w.app_name, &w.title)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        os_impl::minimize_window(window_id)
+    }
+}
+
+/// Maximize the window.
+pub fn maximize_window(window_id: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let w = find_window(window_id)?;
+        os_impl::maximize_window(&w.app_name, &w.title)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        os_impl::maximize_window(window_id)
+    }
+}
+
+/// Restore the window from a minimized or maximized state.
+pub fn restore_window(window_id: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let w = find_window(window_id)?;
+        os_impl::restore_window(&w.app_name, &w.title)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        os_impl::restore_window(window_id)
+    }
+}
+
+/// Close the window.
+pub fn close_window(window_id: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let w = find_window(window_id)?;
+        os_impl::close_window(&w.app_name, &w.title)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        os_impl::close_window(window_id)
     }
 }
 
