@@ -22,6 +22,22 @@ unsafe extern "C" {
 
 pub struct MacosBackend;
 
+/// Scale factor of the primary monitor (e.g. 2.0 on Retina), used to convert
+/// mk's physical-pixel input into the logical points CGPoint expects. Falls
+/// back to 1.0 (no-op) if xcap is unavailable or reports something unusable.
+fn primary_scale_factor() -> f64 {
+    if let Ok(monitors) = xcap::Monitor::all() {
+        if let Some(m) = monitors.first() {
+            if let Ok(scale) = m.scale_factor() {
+                if scale.is_finite() && scale > 0.0 {
+                    return scale as f64;
+                }
+            }
+        }
+    }
+    1.0
+}
+
 impl Backend for MacosBackend {
     fn type_text(&self, text: &str) -> Result<()> {
         let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
@@ -73,7 +89,15 @@ impl Backend for MacosBackend {
             CGPoint::new(0.0, 0.0)
         };
 
-        let target_pos = CGPoint::new(x as f64, y as f64);
+        // `x,y` arrive in physical pixels (mk's screenshot/click contract);
+        // CGPoint expects logical points, so convert before building the
+        // target. See src/input/scaling.rs module doc. start_pos above is a
+        // live OS readback already in logical points — left untouched.
+        // NEEDS validation on real macOS hardware (none available here);
+        // logic mirrors the already-validated Linux HiDPI fix (commit 8680594).
+        let scale = primary_scale_factor();
+        let (logical_x, logical_y) = crate::input::scaling::physical_to_logical(x, y, scale);
+        let target_pos = CGPoint::new(logical_x, logical_y);
 
         if duration_ms == 0 {
             let event = CGEvent::new_mouse_event(
@@ -127,11 +151,20 @@ impl Backend for MacosBackend {
         let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .map_err(|_| anyhow!("Failed to create CGEventSource"))?;
 
-        // 1. Move to start coordinates
+        // 1. Move to start coordinates (mouse_move already converts physical
+        // -> logical internally, so no double conversion happens there)
         self.mouse_move(x1, y1, 0)?;
 
+        // x1,y1/x2,y2 arrive in physical pixels; convert to logical points
+        // for the CGPoints built locally in this function. See
+        // src/input/scaling.rs module doc. NEEDS validation on real macOS
+        // hardware (none available here); mirrors the validated Linux fix.
+        let scale = primary_scale_factor();
+        let (start_x, start_y) = crate::input::scaling::physical_to_logical(x1, y1, scale);
+        let (end_x, end_y) = crate::input::scaling::physical_to_logical(x2, y2, scale);
+
         // 2. Press left button down at start
-        let start_pos = CGPoint::new(x1 as f64, y1 as f64);
+        let start_pos = CGPoint::new(start_x, start_y);
         let event_down = CGEvent::new_mouse_event(
             source.clone(),
             CGEventType::LeftMouseDown,
@@ -142,7 +175,7 @@ impl Backend for MacosBackend {
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         // 3. Move to end coordinates simulating dragging
-        let target_pos = CGPoint::new(x2 as f64, y2 as f64);
+        let target_pos = CGPoint::new(end_x, end_y);
         if duration_ms == 0 {
             let event_drag = CGEvent::new_mouse_event(
                 source.clone(),
@@ -156,8 +189,8 @@ impl Backend for MacosBackend {
             let step_delay = std::time::Duration::from_millis((duration_ms as f64 / steps) as u64);
             for i in 1..=steps as i32 {
                 let t = i as f64 / steps;
-                let cur_x = x1 as f64 + (x2 as f64 - x1 as f64) * t;
-                let cur_y = y1 as f64 + (y2 as f64 - y1 as f64) * t;
+                let cur_x = start_x + (end_x - start_x) * t;
+                let cur_y = start_y + (end_y - start_y) * t;
                 let cur_pos = CGPoint::new(cur_x, cur_y);
                 let event_drag = CGEvent::new_mouse_event(
                     source.clone(),

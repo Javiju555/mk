@@ -182,6 +182,44 @@ enum WindowAction {
         /// Window id (as reported by `mk window list`)
         id: String,
     },
+    /// Move a window to coordinates x, y (best-effort, per-OS)
+    Move {
+        /// Window id
+        id: String,
+        /// Target X coordinate
+        x: i32,
+        /// Target Y coordinate
+        y: i32,
+    },
+    /// Resize a window to width x height (best-effort, per-OS)
+    Resize {
+        /// Window id
+        id: String,
+        /// Target width
+        width: u32,
+        /// Target height
+        height: u32,
+    },
+    /// Minimize a window (best-effort, per-OS)
+    Minimize {
+        /// Window id
+        id: String,
+    },
+    /// Maximize a window (best-effort, per-OS)
+    Maximize {
+        /// Window id
+        id: String,
+    },
+    /// Restore a window from minimized/maximized state (best-effort, per-OS)
+    Restore {
+        /// Window id
+        id: String,
+    },
+    /// Close a window (best-effort, per-OS)
+    Close {
+        /// Window id
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -325,6 +363,19 @@ impl ScheduledAction {
 }
 
 fn main() -> Result<()> {
+    // Make the process per-monitor-DPI-aware so SetCursorPos/GetCursorPos (and xcap's
+    // screenshot capture) operate in physical pixels, matching mk's coordinate contract.
+    // Without this, an unaware process gets coordinates silently rescaled by Windows on
+    // HiDPI displays (same class of bug fixed for Linux in commit 8680594).
+    // NEEDS validation on real Windows hardware — no Windows machine available in this dev environment.
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows_sys::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -493,7 +544,7 @@ fn default_scheduled_log_path() -> String {
     format!("{dir}/scheduled.log")
 }
 
-/// Handle `mk window {list,active,focus}` — printing JSON for list/active so
+/// Handle `mk window {list,active,focus,move,resize,minimize,maximize,restore,close}` — printing JSON for list/active so
 /// the output is machine-consumable (e.g. by an agent picking a click target).
 fn handle_window(action: WindowAction) -> Result<()> {
     use mk::windows;
@@ -509,6 +560,30 @@ fn handle_window(action: WindowAction) -> Result<()> {
         WindowAction::Focus { id } => {
             windows::focus_window(&id)?;
             println!("Focused window {id}");
+        }
+        WindowAction::Move { id, x, y } => {
+            windows::move_window(&id, x, y)?;
+            println!("Moved window {id} to ({x}, {y})");
+        }
+        WindowAction::Resize { id, width, height } => {
+            windows::resize_window(&id, width, height)?;
+            println!("Resized window {id} to {width}x{height}");
+        }
+        WindowAction::Minimize { id } => {
+            windows::minimize_window(&id)?;
+            println!("Minimized window {id}");
+        }
+        WindowAction::Maximize { id } => {
+            windows::maximize_window(&id)?;
+            println!("Maximized window {id}");
+        }
+        WindowAction::Restore { id } => {
+            windows::restore_window(&id)?;
+            println!("Restored window {id}");
+        }
+        WindowAction::Close { id } => {
+            windows::close_window(&id)?;
+            println!("Closed window {id}");
         }
     }
     Ok(())
