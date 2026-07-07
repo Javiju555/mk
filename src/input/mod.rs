@@ -1,3 +1,6 @@
+// Always compiled (not platform-gated) so its unit tests run everywhere.
+pub mod scaling;
+
 #[cfg(target_os = "linux")]
 pub mod daemon;
 #[cfg(target_os = "linux")]
