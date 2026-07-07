@@ -6,11 +6,32 @@ use std::path::Path;
 
 const SOCKET_PATH: &str = "/tmp/mk-daemon.sock";
 
+/// Physical screen resolution, i.e. the pixel dimensions of what `mk
+/// screenshot` captures — the space users read click coordinates from.
+///
+/// This matters under fractional display scaling. On Wayland, xcap's
+/// `Monitor::width()/height()` report the LOGICAL size (e.g. 1728×1152 at
+/// 1.667× scale), while xcap's *screenshots* are PHYSICAL pixels (2880×1920).
+/// `scale_coords` maps a coordinate into the virtual absolute-pointer range
+/// (0..32767) across this resolution; if it used the logical size, every
+/// click would land off by the scale factor (≈1.667×) toward the bottom-right
+/// — empirically confirmed on GNOME/Wayland (a click aimed at "File" opened
+/// "Edit"). Recover the physical extent as `logical × scale_factor` so clicks
+/// land where the screenshot shows. `scale_factor` is 1.0 when unscaled, so
+/// this is a no-op on non-scaled displays.
+///
+/// NOTE: verified on Linux/Wayland (1.667× scale). The `× scale_factor`
+/// recovery assumes `width()` is logical; validate on Windows/macOS before
+/// relying on it there (see docs/computer-use-skill.md).
 fn get_screen_resolution() -> (i32, i32) {
     if let Ok(monitors) = xcap::Monitor::all() {
         if let Some(m) = monitors.first() {
             if let (Ok(w), Ok(h)) = (m.width(), m.height()) {
-                return (w as i32, h as i32);
+                let scale = m.scale_factor().unwrap_or(1.0);
+                let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+                let pw = (w as f32 * scale).round() as i32;
+                let ph = (h as f32 * scale).round() as i32;
+                return (pw.max(1), ph.max(1));
             }
         }
     }

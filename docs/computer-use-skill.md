@@ -16,16 +16,40 @@ followed by a screenshot you actually read before the next action. This is
 slow on purpose — a wrong click can close the window that hosts your own
 session.
 
-## Coordinates
+## Coordinates — the HiDPI scaling trap (read this)
 
-- `mk screenshot <path>` writes a PNG at the **native** resolution (here
-  2880×1920). Click coordinates are **1:1** with that PNG — a target at pixel
-  (x,y) in the screenshot is clicked with `mk click x y`. No scaling.
+`mk screenshot` writes a PNG in **PHYSICAL** pixels (here 2880×1920). Whether
+`mk click x,y` (using those same physical pixels) lands correctly depends on
+the display scale:
+
+- **Unscaled (1×) display:** clicks are 1:1 with the screenshot. Straight­forward.
+- **Fractionally-scaled display (this machine: 1.667× on GNOME/Wayland):**
+  there was a **bug** — clicks landed off by the scale factor toward the
+  bottom-right (a click aimed at the "File" menu opened "Edit"). Root cause:
+  xcap reports the **logical** size for `Monitor::width()/height()`
+  (1728×1152) but captures screenshots in **physical** pixels (2880×1920);
+  `scale_coords` mapped the virtual absolute pointer across the logical size,
+  so every coordinate was scaled wrong.
+  - **Fixed** (2026-07-07, `src/input/daemon.rs`): `get_screen_resolution`
+    now returns `logical × scale_factor` = physical, matching the screenshot.
+    After the fix, raw screenshot coordinates land correctly (verified:
+    `mk click 89 75` opens "File" as intended). **Rebuild + reinstall the
+    daemon/client for the fix to take effect.**
+  - **If you're on an unpatched `mk` under fractional scaling**, the manual
+    workaround is: `mk click (px / scale)`, i.e. divide screenshot
+    coordinates by the display scale factor (get it from
+    `~/.config/monitors.xml` `<scale>` on GNOME, or `xcap` `scale_factor`).
+    For 1.667×: `mk_x = screenshot_x / 1.667`.
+
 - Screenshots do **not** capture the cursor, so `mk move x y` can't be
-  visually confirmed by position — confirm by clicking and observing the
-  result instead, and keep targets well inside safe regions.
-- Take the first screenshot before doing anything and re-check the reported
-  image dimensions each session; don't assume last session's resolution.
+  visually confirmed by position. In practice the ideal
+  "move→screenshot→validate→click" degrades to **"identify target from the
+  current screenshot → click → screenshot the RESULT → adjust"** — validation
+  happens *after* the click. So always aim at a target that gives clear
+  feedback when hit (a menu opens, a field's focus ring appears), and near the
+  origin first when calibrating (scale error is smallest there).
+- Take the first screenshot before anything and re-check the reported image
+  dimensions **and the display scale** each session.
 
 ## Gotchas that cost real attempts
 
@@ -38,17 +62,30 @@ session.
    character-by-character into the agent's own input while navigating — any
    window switch would have split it.)
 
-2. **GNOME overview click ≠ reliable window switch.** `mk key super` opens
-   Activities, but clicking a window thumbnail is timing- and
-   coordinate-fragile: the overview can close before the click registers, so
-   the click lands on whatever is underneath (often the wrong app). Expect to
-   retry and re-screenshot.
+2. **Prefer `mk key alt+tab` over overview-clicking to switch windows.**
+   `mk key alt+tab` reliably raises the previous window (verified: brought the
+   Claude PWA to the foreground first try). Clicking a thumbnail in the
+   `mk key super` overview is far less reliable — partly the overview can
+   close before the click registers, but the bigger culprit was the HiDPI
+   coordinate bug above (clicks missed the thumbnail and hit the app behind).
+   With the scale fix, overview-clicking is more usable, but alt+tab is still
+   the simpler, keyboard-only path for "go to that other window".
 
 3. **`mk window list` is blind on GNOME/Wayland.** It enumerates via XCB and
    sees only XWayland surfaces — the real apps (browsers, IDEs, PWAs) are
    Wayland-native and invisible. Do **not** rely on it to find a window's
    coordinates on Wayland. (It *is* reliable on X11, Windows, macOS.) See
    `docs/window-control.md`.
+
+4b. **Typing/pasting into a web-app text field needs an accurate click first.**
+   Early attempts to `mk paste` into the Claude PWA's input failed — because
+   the coordinate bug meant the "focus the input" click never actually hit it
+   (no cursor in the screenshot to reveal the miss). The lesson: you cannot
+   confirm a text field is focused visually before typing; land the focus
+   click accurately (post-fix), verify via a screenshot that shows the caret/
+   focus ring, and only then paste. This fragility is the strongest argument
+   for the (currently stubbed) `accessibility` module — targeting a field by
+   role/name beats blind coordinates.
 
 4. **Never click these:** the GNOME-overview per-window close **✗** (top-right
    of the hovered window), and an app's own window-control buttons. In
