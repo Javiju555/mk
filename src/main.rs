@@ -360,7 +360,28 @@ fn main() -> Result<()> {
         real_backend
     };
 
-    let mut logger = cli.log.as_deref().map(Logger::new).transpose()?;
+    // Scheduled commands (`in`/`at`) log by default — so there's always a
+    // persistent record of whether and when a delayed action actually fired,
+    // even if the user forgot `--log`. An explicit `--log` still wins.
+    let default_log = matches!(cli.command, Commands::In { .. } | Commands::At { .. })
+        .then(default_scheduled_log_path);
+    let log_path = cli.log.clone().or(default_log);
+    let mut logger = log_path.as_deref().map(Logger::new).transpose()?;
+
+    // Record the "armed" moment for scheduled commands; the fire itself is
+    // logged by the interpreter when the action runs after the wait.
+    if let Some(l) = logger.as_mut() {
+        match &cli.command {
+            Commands::In { duration, .. } => {
+                let _ = l.log("scheduled", &format!("in {duration}"), "armed");
+            }
+            Commands::At { time, .. } => {
+                let _ = l.log("scheduled", &format!("at {time}"), "armed");
+            }
+            _ => {}
+        }
+    }
+
     let mut interp = Interpreter::new(backend.as_ref(), cli.dry_run, logger.as_mut());
 
     match cli.command {
@@ -455,6 +476,21 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Default log for scheduled (`in`/`at`) actions: `~/.local/share/mk/scheduled.log`
+/// (XDG_DATA_HOME-aware), created on demand. Append-only, so the trail accrues.
+fn default_scheduled_log_path() -> String {
+    let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            format!("{home}/.local/share")
+        });
+    let dir = format!("{base}/mk");
+    let _ = std::fs::create_dir_all(&dir);
+    format!("{dir}/scheduled.log")
 }
 
 /// Handle `mk window {list,active,focus}` — printing JSON for list/active so
