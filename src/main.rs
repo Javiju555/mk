@@ -325,6 +325,19 @@ impl ScheduledAction {
 }
 
 fn main() -> Result<()> {
+    // Make the process per-monitor-DPI-aware so SetCursorPos/GetCursorPos (and xcap's
+    // screenshot capture) operate in physical pixels, matching mk's coordinate contract.
+    // Without this, an unaware process gets coordinates silently rescaled by Windows on
+    // HiDPI displays (same class of bug fixed for Linux in commit 8680594).
+    // NEEDS validation on real Windows hardware — no Windows machine available in this dev environment.
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows_sys::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
