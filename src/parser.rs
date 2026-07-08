@@ -30,7 +30,9 @@ pub enum Command {
     MouseDown(String),
     MouseUp(String),
     MouseScroll(String, String),
-    Screenshot(String),
+    Screenshot(String, bool, u8),           // (path, raw_mode, quality)
+    ScreenshotWindow(String, String, bool, u8), // (window_id, path, raw_mode, quality)
+    ScreenshotMonitor(usize, String, bool, u8), // (monitor_idx, path, raw_mode, quality)
 }
 
 pub fn parse_duration(s: &str) -> Result<Duration> {
@@ -471,7 +473,15 @@ fn parse_script_inner(
                     .get(1)
                     .context("screenshot command requires a file path")?;
                 let arg = expand_vars(arg, vars);
-                commands.push(Command::Screenshot(arg));
+                // Check for --raw flag
+                let raw = parts.iter().any(|p| *p == "--raw");
+                // Check for --quality flag
+                let quality = parts.iter()
+                    .position(|p| *p == "--quality")
+                    .and_then(|pos| parts.get(pos + 1))
+                    .and_then(|q| q.parse::<u8>().ok())
+                    .unwrap_or(85);
+                commands.push(Command::Screenshot(arg, raw, quality));
                 i += 1;
             }
             _ => bail!("Unknown command: {keyword} on line {}", i + 1),
@@ -800,15 +810,39 @@ impl<'a> Interpreter<'a> {
                 }
                 self.log_action("mouse_scroll", &format!("clicks {clicks_parsed}, horizontal {horiz_parsed}"), "ok")?;
             }
-            Command::Screenshot(path) => {
+            Command::Screenshot(path, raw, quality) => {
                 let path_val = expand_vars(path, &self.vars);
                 let path_clean = unquote(&path_val);
+                let format = if *raw { crate::vision::ScreenshotFormat::Raw } else { crate::vision::ScreenshotFormat::Compressed };
                 if self.dry_run {
-                    println!("[dry-run] take_screenshot: save to {path_clean}");
+                    println!("[dry-run] take_screenshot: save to {path_clean} (raw={raw}, quality={quality})");
                 } else {
-                    crate::vision::capture_screen(path_clean)?;
+                    crate::vision::capture_screen(path_clean, format, *quality)?;
                 }
                 self.log_action("screenshot", path_clean, "ok")?;
+            }
+            Command::ScreenshotWindow(window_id, path, raw, quality) => {
+                let window_id_val = expand_vars(window_id, &self.vars);
+                let path_val = expand_vars(path, &self.vars);
+                let path_clean = unquote(&path_val);
+                let format = if *raw { crate::vision::ScreenshotFormat::Raw } else { crate::vision::ScreenshotFormat::Compressed };
+                if self.dry_run {
+                    println!("[dry-run] take_window_screenshot: window {window_id_val}, save to {path_clean} (raw={raw}, quality={quality})");
+                } else {
+                    crate::vision::capture_window(&window_id_val, path_clean, format, *quality)?;
+                }
+                self.log_action("screenshot_window", &format!("window={window_id_val} path={path_clean}"), "ok")?;
+            }
+            Command::ScreenshotMonitor(monitor_idx, path, raw, quality) => {
+                let path_val = expand_vars(path, &self.vars);
+                let path_clean = unquote(&path_val);
+                let format = if *raw { crate::vision::ScreenshotFormat::Raw } else { crate::vision::ScreenshotFormat::Compressed };
+                if self.dry_run {
+                    println!("[dry-run] take_monitor_screenshot: monitor {monitor_idx}, save to {path_clean} (raw={raw}, quality={quality})");
+                } else {
+                    crate::vision::capture_monitor(*monitor_idx, path_clean, format, *quality)?;
+                }
+                self.log_action("screenshot_monitor", &format!("monitor={monitor_idx} path={path_clean}"), "ok")?;
             }
         }
         Ok(())

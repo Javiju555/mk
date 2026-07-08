@@ -32,8 +32,10 @@ mod os_impl {
     use anyhow::{bail, Result};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SetForegroundWindow, ShowWindow, SetWindowPos, PostMessageW,
+        BringWindowToTop,
         SW_RESTORE, SW_MINIMIZE, SW_MAXIMIZE, WM_CLOSE,
         SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE,
+        IsIconic,
     };
 
     fn parse_hwnd(window_id: &str) -> Result<windows_sys::Win32::Foundation::HWND> {
@@ -45,11 +47,19 @@ mod os_impl {
 
     pub fn focus_window(window_id: &str) -> Result<()> {
         let hwnd = parse_hwnd(window_id)?;
+        
         unsafe {
-            ShowWindow(hwnd, SW_RESTORE);
-            if SetForegroundWindow(hwnd) == 0 {
-                bail!("Failed to set foreground window");
+            // Only restore if minimized - don't change window state otherwise
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
             }
+            
+            // Bring window to top of Z-order
+            BringWindowToTop(hwnd);
+            
+            // Try SetForegroundWindow
+            SetForegroundWindow(hwnd);
+            
             Ok(())
         }
     }

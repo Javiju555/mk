@@ -149,13 +149,30 @@ enum Commands {
         /// Number of scroll clicks (negative for down/left, positive for up/right)
         clicks: i32,
         /// Scroll horizontally instead of vertically
-        #[arg(short, long)]
+        #[arg(long)]
         horizontal: bool,
     },
+    /// Print current mouse cursor position (x, y)
+    MousePos,
     /// Take a screenshot
     Screenshot {
-        /// Path to save the PNG image
+        /// Path to save the image
         path: String,
+        /// Window ID to capture (from `mk window list`). If omitted, captures a monitor.
+        #[arg(short, long)]
+        window: Option<String>,
+        /// Monitor index to capture (0=primary, 1=secondary, etc). Default: 0
+        #[arg(short, long)]
+        monitor: Option<usize>,
+        /// Raw mode: full resolution PNG. Default: compressed JPEG (smaller)
+        #[arg(long)]
+        raw: bool,
+        /// JPEG quality 1-100 (default: 85). Only applies in compressed mode.
+        #[arg(long, default_value_t = 85)]
+        quality: u8,
+        /// Draw red crosshair at current cursor position
+        #[arg(long)]
+        cursor: bool,
     },
     /// Manage the mk-daemon service
     Daemon {
@@ -313,7 +330,7 @@ enum ScheduledAction {
         /// Number of scroll clicks
         clicks: i32,
         /// Scroll horizontally instead of vertically
-        #[arg(short, long)]
+        #[arg(long)]
         horizontal: bool,
     },
     /// Take a screenshot
@@ -357,7 +374,7 @@ impl ScheduledAction {
                 clicks.to_string(),
                 horizontal.to_string()
             ),
-            ScheduledAction::Screenshot { path } => parser::Command::Screenshot(path.clone()),
+            ScheduledAction::Screenshot { path } => parser::Command::Screenshot(path.clone(), false, 85),
         }
     }
 }
@@ -520,8 +537,42 @@ fn main() -> Result<()> {
         Commands::Scroll { clicks, horizontal } => {
             interp.run(&[parser::Command::MouseScroll(clicks.to_string(), horizontal.to_string())])?;
         }
-        Commands::Screenshot { path } => {
-            interp.run(&[parser::Command::Screenshot(path)])?;
+        Commands::MousePos => {
+            #[cfg(target_os = "windows")]
+            {
+                unsafe {
+                    let mut pos = std::mem::zeroed();
+                    if windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pos) != 0 {
+                        println!("x={}, y={}", pos.x, pos.y);
+                    } else {
+                        eprintln!("Failed to get cursor position");
+                    }
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                eprintln!("mouse-pos is only supported on Windows");
+            }
+        }
+        Commands::Screenshot { path, window, monitor, raw, quality, cursor } => {
+            let format = if raw { mk::vision::ScreenshotFormat::Raw } else { mk::vision::ScreenshotFormat::Compressed };
+            if let Some(window_id) = window {
+                interp.run(&[parser::Command::ScreenshotWindow(window_id, path, raw, quality)])?;
+            } else {
+                let monitor_idx = monitor.unwrap_or(0);
+                if cursor {
+                    #[cfg(target_os = "windows")]
+                    {
+                        mk::vision::capture_screen_with_cursor(&path, format, quality)?;
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        interp.run(&[parser::Command::ScreenshotMonitor(monitor_idx, path, raw, quality)])?;
+                    }
+                } else {
+                    interp.run(&[parser::Command::ScreenshotMonitor(monitor_idx, path, raw, quality)])?;
+                }
+            }
         }
         Commands::Daemon { .. } | Commands::Doctor | Commands::Window { .. } => unreachable!(),
     }
