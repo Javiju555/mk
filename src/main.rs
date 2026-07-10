@@ -16,7 +16,12 @@ use mk::input::{Backend, DryRunBackend};
 use mk::parser::{Interpreter, Logger};
 
 #[derive(Parser)]
-#[command(name = "mk", about = "Automate keyboard input on Linux", version)]
+#[command(
+    name = "mk",
+    about = "Automate keyboard and mouse input",
+    long_about = "Automate keyboard and mouse input on Linux, Windows, and macOS.\n\nPlatform-specific backends:\n  • Linux:   xdotool (X11), ydotool (Wayland), libinput (daemon)\n  • Windows: Win32 API (native)\n  • macOS:   AppleScript + CoreGraphics",
+    version
+)]
 struct Cli {
     /// Print actions without executing them
     #[arg(long, global = true)]
