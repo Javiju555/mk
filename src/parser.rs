@@ -1466,7 +1466,7 @@ screenshot "shot.png"
             _ => panic!("expected MouseScroll"),
         }
         match &cmds[6] {
-            Command::Screenshot(p) => assert_eq!(p, "\"shot.png\""),
+            Command::Screenshot(p, ..) => assert_eq!(p, "\"shot.png\""),
             _ => panic!("expected Screenshot"),
         }
     }

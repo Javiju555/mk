@@ -103,12 +103,33 @@ pub fn capture_screen(dest_path: &str, format: ScreenshotFormat, quality: u8) ->
 /// Capture screen and draw a crosshair at the current cursor position
 pub fn capture_screen_with_cursor(dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
     // Get cursor position first
+    #[cfg(windows)]
     let cursor_pos = unsafe {
         let mut pos = std::mem::zeroed();
         if windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pos) != 0 {
             (pos.x, pos.y)
         } else {
             (0, 0)
+        }
+    };
+
+    #[cfg(not(windows))]
+    let cursor_pos = {
+        use std::process::Command;
+        let output = Command::new("xdotool").args(["getcursor"]).output();
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let x: i32 = parts[0].parse().unwrap_or(0);
+                    let y: i32 = parts[1].parse().unwrap_or(0);
+                    (x, y)
+                } else {
+                    (0, 0)
+                }
+            }
+            Err(_) => (0, 0),
         }
     };
 
@@ -212,11 +233,11 @@ mod tests {
         let _ = fs::remove_file(region_path_str);
 
         // Capture screen
-        if let Ok(()) = capture_screen(screen_path_str, ScreenshotFormat::Raw) {
+        if let Ok(()) = capture_screen(screen_path_str, ScreenshotFormat::Raw, 85) {
             assert!(screen_path.exists());
-            
+
             // Capture a small region (100x100 starting at 10,10)
-            if let Ok(()) = capture_region(10, 10, 100, 100, region_path_str, ScreenshotFormat::Raw) {
+            if let Ok(()) = capture_region(10, 10, 100, 100, region_path_str, ScreenshotFormat::Raw, 85) {
                 assert!(region_path.exists());
                 let _ = fs::remove_file(region_path_str);
             }

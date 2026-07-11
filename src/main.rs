@@ -560,7 +560,8 @@ fn main() -> Result<()> {
             }
         }
         Commands::Screenshot { path, window, monitor, raw, quality, cursor } => {
-            let format = if raw { mk::vision::ScreenshotFormat::Raw } else { mk::vision::ScreenshotFormat::Compressed };
+            // Only read on the Windows cursor-capture branch below; unused elsewhere.
+            let _format = if raw { mk::vision::ScreenshotFormat::Raw } else { mk::vision::ScreenshotFormat::Compressed };
             if let Some(window_id) = window {
                 interp.run(&[parser::Command::ScreenshotWindow(window_id, path, raw, quality)])?;
             } else {
@@ -568,7 +569,7 @@ fn main() -> Result<()> {
                 if cursor {
                     #[cfg(target_os = "windows")]
                     {
-                        mk::vision::capture_screen_with_cursor(&path, format, quality)?;
+                        mk::vision::capture_screen_with_cursor(&path, _format, quality)?;
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
