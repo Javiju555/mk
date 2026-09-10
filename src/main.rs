@@ -19,7 +19,7 @@ use mk::parser::{Interpreter, Logger};
 #[command(
     name = "mk",
     about = "Automate keyboard and mouse input",
-    long_about = "Automate keyboard and mouse input on Linux, Windows, and macOS.\n\nPlatform-specific backends:\n  • Linux:   xdotool (X11), ydotool (Wayland), libinput (daemon)\n  • Windows: Win32 API (native)\n  • macOS:   AppleScript + CoreGraphics",
+    long_about = "Automate keyboard and mouse input on Linux, Windows, and macOS.\n\nPlatform-specific backends:\n  • Linux:   xdotool (X11), ydotool (Wayland), libinput (daemon)\n  • Windows: Win32 API (native)\n  • macOS:   AppleScript + CoreGraphics\n\nRecipe: window list (fresco) → actuar con --focus o mk ui (sin foco) → screenshot -w --raw → leer",
     version
 )]
 struct Cli {
@@ -109,6 +109,9 @@ enum Commands {
         /// Duration of progressive slide (e.g. "500ms")
         #[arg(short, long)]
         duration: Option<String>,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Click a mouse button at coordinates
     Click {
@@ -122,6 +125,9 @@ enum Commands {
         /// Duration of progressive slide before clicking (e.g. "500ms")
         #[arg(short, long)]
         duration: Option<String>,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Drag the mouse from start to end coordinates
     Drag {
@@ -157,6 +163,9 @@ enum Commands {
         /// Scroll horizontally instead of vertically
         #[arg(long)]
         horizontal: bool,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Print current mouse cursor position (x, y)
     MousePos,
@@ -197,6 +206,11 @@ enum Commands {
     Window {
         #[command(subcommand)]
         action: WindowAction,
+    },
+    /// Semantic UI control via OS accessibility APIs (Windows UIA first)
+    Ui {
+        #[command(subcommand)]
+        action: UiAction,
     },
 }
 
@@ -263,6 +277,47 @@ enum WindowAction {
         /// Poll interval, e.g. "400ms" (default "400ms")
         #[arg(long, default_value = "400ms")]
         interval: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum UiAction {
+    /// List UI elements of a window as JSON (name-based targeting)
+    Tree {
+        /// Window id (from `mk window list`)
+        #[arg(long)]
+        window: String,
+        /// Filter: substring (case-insensitive)
+        #[arg(long)]
+        contains: Option<String>,
+        /// Filter: regex (needs `regex` semantics)
+        #[arg(long)]
+        regex: Option<String>,
+        /// Filter by role (e.g. "button")
+        #[arg(long)]
+        role: Option<String>,
+    },
+    /// Invoke (click) a control by name — no focus or coordinates needed
+    Click {
+        #[arg(long)] window: String,
+        #[arg(long)] name: String,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
+    /// Toggle a checkbox/switch by name
+    Toggle {
+        #[arg(long)] window: String,
+        #[arg(long)] name: String,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
+    /// Set an edit/combo value by name
+    SetValue {
+        #[arg(long)] window: String,
+        #[arg(long)] name: String,
+        #[arg(long)] value: String,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
     },
 }
 
@@ -430,6 +485,9 @@ fn main() -> Result<()> {
         Commands::Window { action } => {
             return handle_window(action);
         }
+        Commands::Ui { action } => {
+            return handle_ui(action);
+        }
         Commands::Daemon { action } => {
             #[cfg(target_os = "linux")]
             {
@@ -544,11 +602,19 @@ fn main() -> Result<()> {
         Commands::PasteDir { path } => {
             interp.run(&[parser::Command::PasteDir(path)])?;
         }
-        Commands::Move { x, y, duration } => {
+        Commands::Move { x, y, duration, focus } => {
+            if let Some(id) = focus.as_deref() {
+                mk::windows::focus_window(id)?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
             let dur = duration.unwrap_or_else(|| "0s".to_string());
             interp.run(&[parser::Command::MouseMove(x.to_string(), y.to_string(), dur)])?;
         }
-        Commands::Click { x, y, button, duration } => {
+        Commands::Click { x, y, button, duration, focus } => {
+            if let Some(id) = focus.as_deref() {
+                mk::windows::focus_window(id)?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
             let dur = duration.unwrap_or_else(|| "0s".to_string());
             interp.run(&[parser::Command::MouseClick(x.to_string(), y.to_string(), button, dur)])?;
         }
@@ -562,7 +628,11 @@ fn main() -> Result<()> {
         Commands::MouseUp { button } => {
             interp.run(&[parser::Command::MouseUp(button)])?;
         }
-        Commands::Scroll { clicks, horizontal } => {
+        Commands::Scroll { clicks, horizontal, focus } => {
+            if let Some(id) = focus.as_deref() {
+                mk::windows::focus_window(id)?;
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
             interp.run(&[parser::Command::MouseScroll(clicks.to_string(), horizontal.to_string())])?;
         }
         Commands::MousePos => {
@@ -625,7 +695,7 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Daemon { .. } | Commands::Doctor | Commands::Window { .. } => unreachable!(),
+        Commands::Daemon { .. } | Commands::Doctor | Commands::Window { .. } | Commands::Ui { .. } => unreachable!(),
     }
 
     Ok(())
@@ -692,6 +762,51 @@ fn handle_window(action: WindowAction) -> Result<()> {
             let i = mk::parser::parse_duration(&interval)?;
             let w = windows::wait_for_window(&title, exact, t, i)?;
             println!("{}", serde_json::to_string_pretty(&w)?);
+        }
+    }
+    Ok(())
+}
+
+fn match_mode(contains: bool, regex: bool) -> Result<mk::accessibility::MatchMode> {
+    use mk::accessibility::MatchMode;
+    match (contains, regex) {
+        (false, false) => Ok(MatchMode::Exact),
+        (true, false) => Ok(MatchMode::Contains),
+        (false, true) => Ok(MatchMode::Regex),
+        (true, true) => anyhow::bail!("usa --contains o --regex, no ambos"),
+    }
+}
+
+fn handle_ui(action: UiAction) -> Result<()> {
+    use mk::accessibility::MatchMode;
+    match action {
+        UiAction::Tree { window, contains, regex, role } => {
+            let mut tree = mk::accessibility::ui_tree_for_window(&window)?;
+            if let Some(sub) = contains {
+                tree.retain(|e| mk::accessibility::match_name(&e.name, &sub, &MatchMode::Contains));
+            }
+            if let Some(re) = regex {
+                tree.retain(|e| mk::accessibility::match_name(&e.name, &re, &MatchMode::Regex));
+            }
+            if let Some(r) = role {
+                tree.retain(|e| e.role.eq_ignore_ascii_case(&r));
+            }
+            println!("{}", serde_json::to_string_pretty(&tree)?);
+        }
+        UiAction::Click { window, name, contains, regex } => {
+            let mode = match_mode(contains, regex)?;
+            let el = mk::accessibility::ui_click(&window, &name, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::Toggle { window, name, contains, regex } => {
+            let mode = match_mode(contains, regex)?;
+            let el = mk::accessibility::ui_toggle(&window, &name, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::SetValue { window, name, value, contains, regex } => {
+            let mode = match_mode(contains, regex)?;
+            let el = mk::accessibility::ui_set_value(&window, &name, &value, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
         }
     }
     Ok(())
@@ -775,11 +890,21 @@ mod cli_tests {
     fn test_scroll_negative_parses_without_double_dash() {
         let cli = Cli::try_parse_from(["mk", "scroll", "-6"]).expect("scroll -6 should parse");
         match cli.command {
-            Commands::Scroll { clicks, horizontal } => {
+            Commands::Scroll { clicks, horizontal, .. } => {
                 assert_eq!(clicks, -6);
                 assert!(!horizontal);
             }
             _ => panic!("expected Scroll"),
         }
+    }
+
+    #[test]
+    fn test_ui_cli_parses() {
+        let cli = Cli::try_parse_from(["mk", "ui", "tree", "--window", "123"]).expect("ui tree parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "click", "--window", "123", "--name", "Mezclador"]).expect("ui click parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "click", "10", "20", "--focus", "123"]).expect("click --focus parse");
+        assert!(matches!(cli.command, Commands::Click { .. }));
     }
 }
