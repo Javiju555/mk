@@ -9,6 +9,27 @@ pub struct UiElement {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub is_enabled: bool,
+    #[serde(default)]
+    pub is_offscreen: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchMode {
+    Exact,
+    Contains,
+    Regex,
+}
+
+/// Exact = trim + case-insensitive. Contains = substring case-insensitive.
+/// Regex = crate `regex`, case-sensitive salvo `(?i)`; inválida → false.
+pub fn match_name(candidate: &str, query: &str, mode: &MatchMode) -> bool {
+    match mode {
+        MatchMode::Exact => candidate.trim().to_lowercase() == query.trim().to_lowercase(),
+        MatchMode::Contains => candidate.to_lowercase().contains(&query.to_lowercase()),
+        MatchMode::Regex => regex::Regex::new(query).map(|re| re.is_match(candidate)).unwrap_or(false),
+    }
 }
 
 pub fn get_ui_tree() -> Result<Vec<UiElement>> {
@@ -19,18 +40,16 @@ pub fn get_ui_tree() -> Result<Vec<UiElement>> {
 
 pub fn find_button(name: &str) -> Result<Option<UiElement>> {
     let tree = get_ui_tree()?;
-    let name_lower = name.to_lowercase();
     Ok(tree.into_iter().find(|el| {
-        el.role.to_lowercase() == "button" && el.name.to_lowercase().contains(&name_lower)
+        el.role.to_lowercase() == "button" && match_name(&el.name, name, &MatchMode::Exact)
     }))
 }
 
 pub fn find_input(placeholder: &str) -> Result<Option<UiElement>> {
     let tree = get_ui_tree()?;
-    let placeholder_lower = placeholder.to_lowercase();
     Ok(tree.into_iter().find(|el| {
         let role = el.role.to_lowercase();
-        (role == "input" || role == "text_input" || role == "edit") && el.name.to_lowercase().contains(&placeholder_lower)
+        (role == "input" || role == "text_input" || role == "edit") && match_name(&el.name, placeholder, &MatchMode::Exact)
     }))
 }
 
@@ -46,5 +65,21 @@ mod tests {
         assert!(btn.is_ok());
         let input = find_input("Username");
         assert!(input.is_ok());
+    }
+
+    #[test]
+    fn test_match_name_exact_is_trim_case_insensitive() {
+        assert!(match_name("Mezclador", "mezclador", &MatchMode::Exact));
+        assert!(match_name("  Mezclador  ", "MEZCLADOR", &MatchMode::Exact));
+        assert!(!match_name("Mezclador panel", "mezclador", &MatchMode::Exact));
+    }
+
+    #[test]
+    fn test_match_name_contains_and_regex() {
+        assert!(match_name("Delay: relativamente sencillo", "delay", &MatchMode::Contains));
+        assert!(!match_name("Delay", "lay$", &MatchMode::Contains));
+        assert!(match_name("Track 01", r"^Track \d+$", &MatchMode::Regex));
+        assert!(!match_name("Track AB", r"^Track \d+$", &MatchMode::Regex));
+        assert!(!match_name("cualquier cosa", "(unclosed", &MatchMode::Regex), "regex inválida = false, no panic");
     }
 }

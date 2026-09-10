@@ -1510,6 +1510,7 @@ dependencies = [
  "foreign-types",
  "image",
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "windows-sys 0.52.0",
