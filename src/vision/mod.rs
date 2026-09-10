@@ -58,6 +58,43 @@ fn draw_crosshair(img: &mut RgbImage, cx: i32, cy: i32) {
     }
 }
 
+/// Parse "x,y,w,h" into a rect tuple. All values in pixels, w/h > 0.
+pub fn parse_crop_rect(s: &str) -> anyhow::Result<(u32, u32, u32, u32)> {
+    let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
+    if parts.len() != 4 {
+        anyhow::bail!("--crop debe ser x,y,w,h (ej. 100,200,800,600), recibido: '{s}'");
+    }
+    let nums: Result<Vec<u32>, _> = parts.iter().map(|p| p.parse::<u32>()).collect();
+    let nums = nums.map_err(|_| anyhow::anyhow!("--crop tiene valores no numéricos: '{s}'"))?;
+    if nums[2] == 0 || nums[3] == 0 {
+        anyhow::bail!("--crop w/h deben ser > 0: '{s}'");
+    }
+    Ok((nums[0], nums[1], nums[2], nums[3]))
+}
+
+/// Crop to `rect` then scale by `zoom` (Nearest neighbour: nítido para UI).
+/// Panics if rect is outside the image — los callers validan antes con mensaje accionable.
+pub fn crop_and_zoom(img: &DynamicImage, rect: (u32, u32, u32, u32), zoom: u32) -> DynamicImage {
+    use image::imageops::FilterType;
+    let (x, y, w, h) = rect;
+    assert!(x + w <= img.width() && y + h <= img.height(), "crop {rect:?} fuera de imagen {}x{}", img.width(), img.height());
+    let zoom = zoom.clamp(1, 8);
+    let cropped = img.crop_imm(x, y, w, h);
+    if zoom == 1 {
+        return cropped;
+    }
+    cropped.resize(w * zoom, h * zoom, FilterType::Nearest)
+}
+
+fn apply_crop_zoom(img: DynamicImage, crop: &Option<String>, zoom: u32) -> anyhow::Result<DynamicImage> {
+    let Some(c) = crop else { return Ok(if zoom <= 1 { img } else { crop_and_zoom(&img, (0, 0, img.width(), img.height()), zoom) }); };
+    let rect = parse_crop_rect(c)?;
+    if rect.0 + rect.2 > img.width() || rect.1 + rect.3 > img.height() {
+        anyhow::bail!("crop {rect:?} fuera de imagen {}x{}", img.width(), img.height());
+    }
+    Ok(crop_and_zoom(&img, rect, zoom))
+}
+
 fn save_image(img: &DynamicImage, dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
     let path = Path::new(dest_path);
     
@@ -92,16 +129,25 @@ fn save_image(img: &DynamicImage, dest_path: &str, format: ScreenshotFormat, qua
 }
 
 pub fn capture_screen(dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
+    capture_screen_with_options(dest_path, format, quality, &None, 1)
+}
+
+pub fn capture_screen_with_options(dest_path: &str, format: ScreenshotFormat, quality: u8, crop: &Option<String>, zoom: u32) -> Result<()> {
     let monitors = Monitor::all().map_err(|e| anyhow::anyhow!("Failed to list monitors: {e}"))?;
     let monitor = monitors.first().context("No monitors found")?;
     let image = monitor.capture_image().map_err(|e| anyhow::anyhow!("Failed to capture screen: {e}"))?;
     let dyn_img = DynamicImage::ImageRgba8(image);
-    save_image(&dyn_img, dest_path, format, quality)?;
+    let final_img = apply_crop_zoom(dyn_img, crop, zoom)?;
+    save_image(&final_img, dest_path, format, quality)?;
     Ok(())
 }
 
 /// Capture screen and draw a crosshair at the current cursor position
 pub fn capture_screen_with_cursor(dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
+    capture_screen_with_cursor_options(dest_path, format, quality, &None, 1)
+}
+
+pub fn capture_screen_with_cursor_options(dest_path: &str, format: ScreenshotFormat, quality: u8, crop: &Option<String>, zoom: u32) -> Result<()> {
     // Get cursor position first
     #[cfg(windows)]
     let cursor_pos = unsafe {
@@ -157,16 +203,22 @@ pub fn capture_screen_with_cursor(dest_path: &str, format: ScreenshotFormat, qua
 
     // Save
     let dyn_img = DynamicImage::ImageRgb8(rgb_img);
-    save_image(&dyn_img, dest_path, format, quality)?;
+    let final_img = apply_crop_zoom(dyn_img, crop, zoom)?;
+    save_image(&final_img, dest_path, format, quality)?;
     Ok(())
 }
 
 pub fn capture_monitor(index: usize, dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
+    capture_monitor_with_options(index, dest_path, format, quality, &None, 1)
+}
+
+pub fn capture_monitor_with_options(index: usize, dest_path: &str, format: ScreenshotFormat, quality: u8, crop: &Option<String>, zoom: u32) -> Result<()> {
     let monitors = Monitor::all().map_err(|e| anyhow::anyhow!("Failed to list monitors: {e}"))?;
     let monitor = monitors.get(index).context(format!("Monitor {} not found ({} available)", index, monitors.len()))?;
     let image = monitor.capture_image().map_err(|e| anyhow::anyhow!("Failed to capture monitor: {e}"))?;
     let dyn_img = DynamicImage::ImageRgba8(image);
-    save_image(&dyn_img, dest_path, format, quality)?;
+    let final_img = apply_crop_zoom(dyn_img, crop, zoom)?;
+    save_image(&final_img, dest_path, format, quality)?;
     Ok(())
 }
 
@@ -185,21 +237,26 @@ pub fn list_monitors() -> Result<Vec<(String, i32, i32, u32, u32)>> {
 }
 
 pub fn capture_window(window_id: &str, dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
+    capture_window_with_options(window_id, dest_path, format, quality, &None, 1)
+}
+
+pub fn capture_window_with_options(window_id: &str, dest_path: &str, format: ScreenshotFormat, quality: u8, crop: &Option<String>, zoom: u32) -> Result<()> {
     let windows = Window::all().map_err(|e| anyhow::anyhow!("Failed to list windows: {e}"))?;
-    
+
     let target_id: u32 = window_id.parse().context("Invalid window ID")?;
-    
+
     let window = windows.iter()
         .find(|w| w.id().unwrap_or(0) == target_id)
         .context("Window not found")?;
-    
+
     if window.is_minimized().unwrap_or(false) {
         anyhow::bail!("Cannot capture minimized window");
     }
-    
+
     let image = window.capture_image().map_err(|e| anyhow::anyhow!("Failed to capture window: {e}"))?;
     let dyn_img = DynamicImage::ImageRgba8(image);
-    save_image(&dyn_img, dest_path, format, quality)?;
+    let final_img = apply_crop_zoom(dyn_img, crop, zoom)?;
+    save_image(&final_img, dest_path, format, quality)?;
     Ok(())
 }
 
@@ -218,6 +275,31 @@ pub fn capture_region(x: u32, y: u32, w: u32, h: u32, dest_path: &str, format: S
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn test_crop_and_zoom_center_pixel() {
+        use image::{DynamicImage, Rgb, RgbImage};
+        let mut img = RgbImage::new(100, 100);
+        for y in 0..100 {
+            for x in 0..100 {
+                img.put_pixel(x, y, Rgb([x as u8, y as u8, 0]));
+            }
+        }
+        let dyn_img = DynamicImage::ImageRgb8(img);
+        let out = crop_and_zoom(&dyn_img, (10, 10, 20, 20), 2);
+        assert_eq!(out.width(), 40);
+        assert_eq!(out.height(), 40);
+
+        let bad = std::panic::catch_unwind(|| crop_and_zoom(&dyn_img, (90, 90, 50, 50), 1));
+        assert!(bad.is_err(), "crop fuera de imagen debe fallar");
+    }
+
+    #[test]
+    fn test_parse_crop_rect() {
+        assert_eq!(parse_crop_rect("10,20,300,200").unwrap(), (10, 20, 300, 200));
+        assert!(parse_crop_rect("10,20").is_err());
+        assert!(parse_crop_rect("a,b,c,d").is_err());
+    }
 
     #[test]
     fn test_capture_screen_and_region() {

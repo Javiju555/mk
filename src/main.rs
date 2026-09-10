@@ -179,6 +179,12 @@ enum Commands {
         /// Draw red crosshair at current cursor position
         #[arg(long)]
         cursor: bool,
+        /// Crop region x,y,w,h applied after capture (e.g. "100,200,800,600")
+        #[arg(long)]
+        crop: Option<String>,
+        /// Zoom factor 1-8 applied after crop (default: 1)
+        #[arg(long, default_value_t = 1)]
+        zoom: u32,
     },
     /// Manage the mk-daemon service
     Daemon {
@@ -576,10 +582,32 @@ fn main() -> Result<()> {
                 eprintln!("mouse-pos is only supported on Windows");
             }
         }
-        Commands::Screenshot { path, window, monitor, raw, quality, cursor } => {
+        Commands::Screenshot { path, window, monitor, raw, quality, cursor, crop, zoom } => {
             // Only read on the Windows cursor-capture branch below; unused elsewhere.
             let _format = if raw { mk::vision::ScreenshotFormat::Raw } else { mk::vision::ScreenshotFormat::Compressed };
-            if let Some(window_id) = window {
+            // New --crop/--zoom path: capture directly with post-process so the
+            // parser::Command variants (no crop support, used by scripts) keep compiling.
+            if crop.is_some() || zoom != 1 {
+                if cli.dry_run {
+                    println!("[dry-run] screenshot: save to {path} (crop={crop:?}, zoom={zoom})");
+                } else if let Some(window_id) = window {
+                    mk::vision::capture_window_with_options(&window_id, &path, _format, quality, &crop, zoom)?;
+                } else {
+                    let monitor_idx = monitor.unwrap_or(0);
+                    if cursor {
+                        #[cfg(target_os = "windows")]
+                        {
+                            mk::vision::capture_screen_with_cursor_options(&path, _format, quality, &crop, zoom)?;
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            mk::vision::capture_monitor_with_options(monitor_idx, &path, _format, quality, &crop, zoom)?;
+                        }
+                    } else {
+                        mk::vision::capture_monitor_with_options(monitor_idx, &path, _format, quality, &crop, zoom)?;
+                    }
+                }
+            } else if let Some(window_id) = window {
                 interp.run(&[parser::Command::ScreenshotWindow(window_id, path, raw, quality)])?;
             } else {
                 let monitor_idx = monitor.unwrap_or(0);
