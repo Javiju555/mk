@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0] - Unreleased
+
+### Added
+- `mk ui tree/click/toggle/set-value` (Windows UIA, exact-match por defecto, `--contains/--regex` opt-in, flags `is_enabled/is_offscreen`).
+- `mk window wait --title` (poll con `--timeout/--interval`).
+- `pid` en `mk window list` (Windows).
+- `mk screenshot --crop x,y,w,h --zoom N`.
+- `--focus <id>` en `move/click/scroll` + `mk scroll -6` sin `--`.
+
 ## [0.6.0] - 2026-06-22
 
 ### Added

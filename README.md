@@ -106,6 +106,39 @@ Toma una captura de pantalla del monitor primario y la guarda en la ruta indicad
 mk screenshot ruta/de/mi_imagen.png
 ```
 
+Para leer un detalle pequeño, recorta y amplía tras la captura:
+
+```bash
+mk screenshot detalle.png -w 329272 --raw --crop 100,200,800,600 --zoom 2
+```
+
+### Control semántico de UI — `mk ui` (Windows, vía UI Automation)
+
+En Windows, `mk ui` actúa sobre controles por **nombre** (sin coordenadas ni
+foco previo): usa `Invoke`/`Toggle`/`ValuePattern` directamente sobre el
+control. `--name` es exact-match (tras `trim()`, case-insensitive) por
+defecto; `--contains` / `--regex` son opt-in.
+
+| Comando                                   | Descripción                              |
+|-------------------------------------------|------------------------------------------|
+| `mk ui tree --window <id>`                | Lista elementos UI de la ventana (JSON)  |
+| `mk ui click --window <id> --name "..."`  | Invoca (clic semántico) un control       |
+| `mk ui toggle --window <id> --name "..."` | Conmuta un checkbox/switch               |
+| `mk ui set-value --window <id> --name "..." --value "..."` | Escribe valor en un edit/combo |
+
+```bash
+mk window list
+mk ui tree --window 329272
+mk ui click --window 329272 --name "Mezclador"
+mk screenshot -w 329272 --raw --crop 100,200,800,600 --zoom 2
+```
+
+ Relacionado (también 0.7.0): `mk window wait --title "<app>" --timeout 10s`
+ (espera a que aparezca una ventana), campo `pid` en `mk window list`
+ (Windows), y `--focus <id>` en `move`/`click`/`scroll` para enfocar la
+ ventana en el mismo proceso antes de actuar (p. ej. `mk click 500 500
+ --focus 329272`). `mk scroll -6` ya funciona sin el separador `--`.
+
 ### Ejecutar un script
 
 ```bash

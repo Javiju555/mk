@@ -142,6 +142,21 @@ so an agent can plan instead of trial-and-error.
   currently a stub) — UIA on Windows, AXUIElement on macOS, AT-SPI2 on Linux
   — to enable "click the button labelled X" instead of raw coordinates. AT-SPI
   coverage on Wayland is app-dependent; treat as best-effort.
+  **Field evidence (2026-07-20, Windows, see `docs/windows-computer-use-notes.md`):**
+  raw coordinate control (`mk move`/`click`/`scroll`) worked correctly once
+  window offset + focus were handled right, but named-element clicks via
+  Windows UI Automation (done outside mk, via `AutomationElement.FindFirst`
+  + `InvokePattern.Invoke()`) succeeded on the first try every time, needed
+  no coordinates/focus/scrolling-into-view, and doubled as a tree-search
+  debugging tool that caught a real UI bug coordinate-poking never would
+  have found. On Windows specifically, this makes Phase 5 higher-leverage
+  than further coordinate-precision work — the `uiautomation` crate (or raw
+  `windows-rs` UIA bindings) maps almost directly onto the existing
+  `UiElement{role,name,x,y,width,height}` stub shape.
+  **Update 2026-09-10 (done en Windows 0.7.0 vía `uiautomation` 0.25.1;
+  Linux/mac siguen stub):** `mk ui tree/click/toggle/set-value` implementado
+  (`--name` exact-match por defecto, `--contains/--regex` opt-in,
+  `is_enabled/is_offscreen` en `UiElement`); ver `docs/windows-computer-use-notes.md`.
 
 ## Honest bottom line for the roadmap
 
