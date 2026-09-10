@@ -15,6 +15,10 @@
 - `mk window alt-tab [n]` (Wayland-safe switcher; `cmd+tab` en macOS).
 - `mk daemon install [--apply]`: regla udev para correr mk-daemon sin root.
 - `mk doctor` detecta IPC de compositores opt-in (`hyprctl`, `swaymsg`).
+- `mk window focus <id>` como comando script (`focus`), además de `--focus` en move/click/scroll.
+- `mk clipboard get` (lee el portapapeles en las 3 plataformas: pbpaste/macOS, wl-paste/xclip/xsel/Linux, CF_UNICODETEXT/Windows).
+- `mk monitors` (lista monitores como JSON con geometría).
+- `mk screenshot --title <substring>` (captura la ventana coincidente inmediatamente, sin `mk window wait` previo).
 
 ## [0.7.0] - Unreleased
 

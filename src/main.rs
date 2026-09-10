@@ -194,6 +194,10 @@ enum Commands {
         /// Zoom factor 1-8 applied after crop (default: 1)
         #[arg(long, default_value_t = 1)]
         zoom: u32,
+        /// Window title substring to capture (resolved immediately, no wait).
+        /// Conflicts with --window.
+        #[arg(long, conflicts_with = "window")]
+        title: Option<String>,
     },
     /// Manage the mk-daemon service
     Daemon {
@@ -212,6 +216,13 @@ enum Commands {
         #[command(subcommand)]
         action: UiAction,
     },
+    /// Read the system clipboard (e.g. after select-all + copy in an app)
+    Clipboard {
+        #[command(subcommand)]
+        action: ClipboardAction,
+    },
+    /// List monitors as JSON (index, name, geometry) for multi-monitor targeting
+    Monitors,
 }
 
 #[derive(Subcommand)]
@@ -325,6 +336,12 @@ enum UiAction {
         #[arg(long)] contains: bool,
         #[arg(long)] regex: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ClipboardAction {
+    /// Print clipboard text to stdout (raw, no trailing newline added)
+    Get,
 }
 
 #[derive(Subcommand)]
@@ -692,9 +709,20 @@ fn main() -> Result<()> {
                 eprintln!("mouse-pos is only supported on Windows, macOS, and Linux/X11");
             }
         }
-        Commands::Screenshot { path, window, monitor, raw, quality, cursor, crop, zoom } => {
+        Commands::Screenshot { path, window, monitor, raw, quality, cursor, crop, zoom, title } => {
             // Only read on the Windows cursor-capture branch below; unused elsewhere.
             let _format = if raw { mk::vision::ScreenshotFormat::Raw } else { mk::vision::ScreenshotFormat::Compressed };
+            // --title resolves to a window id via an immediate (zero-timeout) lookup.
+            // clap already rejects --window + --title together; the first arm is defensive.
+            let window = match (window, title) {
+                (Some(_), Some(_)) => bail!("--window and --title conflict"),
+                (Some(id), None) => Some(id),
+                (None, Some(t)) => {
+                    let w = mk::windows::wait_for_window(&t, false, Duration::ZERO, Duration::from_millis(100))?;
+                    Some(w.id)
+                }
+                (None, None) => None,
+            };
             // New --crop/--zoom path: capture directly with post-process so the
             // parser::Command variants (no crop support, used by scripts) keep compiling.
             if crop.is_some() || zoom != 1 {
@@ -742,6 +770,27 @@ fn main() -> Result<()> {
                     interp.run(&[parser::Command::ScreenshotMonitor(monitor_idx, path, raw, quality)])?;
                 }
             }
+        }
+        Commands::Clipboard { action } => match action {
+            ClipboardAction::Get => {
+                if cli.dry_run {
+                    println!("[dry-run] read_clipboard");
+                } else {
+                    // Raw content, no added newline: the agent sees exactly what was copied.
+                    print!("{}", mk::output::clipget::read_clipboard()?);
+                }
+            }
+        },
+        Commands::Monitors => {
+            let list = mk::vision::list_monitors()?;
+            let arr: Vec<serde_json::Value> = list
+                .iter()
+                .enumerate()
+                .map(|(i, (name, x, y, w, h))| {
+                    serde_json::json!({"index": i, "name": name, "x": x, "y": y, "width": w, "height": h})
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
         }
         Commands::Daemon { .. } | Commands::Doctor | Commands::Window { .. } | Commands::Ui { .. } => unreachable!(),
     }

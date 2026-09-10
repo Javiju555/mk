@@ -30,6 +30,7 @@ pub enum Command {
     MouseDown(String),
     MouseUp(String),
     MouseScroll(String, String),
+    Focus(String),
     Screenshot(String, bool, u8),           // (path, raw_mode, quality)
     ScreenshotWindow(String, String, bool, u8), // (window_id, path, raw_mode, quality)
     ScreenshotMonitor(usize, String, bool, u8), // (monitor_idx, path, raw_mode, quality)
@@ -450,6 +451,15 @@ fn parse_script_inner(
                 commands.push(Command::MouseUp(button));
                 i += 1;
             }
+            "focus" => {
+                let arg = parts
+                    .get(1)
+                    .context("focus command requires: focus <window-id>")?;
+                let arg = expand_vars(arg, vars);
+                let id = unquote(&arg);
+                commands.push(Command::Focus(id.to_string()));
+                i += 1;
+            }
             "scroll" => {
                 let arg = parts
                     .get(1)
@@ -795,6 +805,16 @@ impl<'a> Interpreter<'a> {
                     self.backend.mouse_up(button_clean)?;
                 }
                 self.log_action("mouse_up", button_clean, "ok")?;
+            }
+            Command::Focus(id) => {
+                let id_val = expand_vars(id, &self.vars);
+                let id_clean = unquote(&id_val);
+                if self.dry_run {
+                    println!("[dry-run] focus_window: {id_clean}");
+                } else {
+                    crate::windows::focus_window(id_clean)?;
+                }
+                self.log_action("focus_window", id_clean, "ok")?;
             }
             Command::MouseScroll(clicks, horizontal) => {
                 let clicks_val = expand_vars(clicks, &self.vars);
@@ -1467,6 +1487,30 @@ screenshot "shot.png"
         }
         match &cmds[6] {
             Command::Screenshot(p, ..) => assert_eq!(p, "\"shot.png\""),
+            _ => panic!("expected Screenshot"),
+        }
+    }
+
+    #[test]
+    fn test_parse_focus_command() {
+        let script = "focus \"12345\"";
+        let cmds = parse_script(script).unwrap();
+        assert_eq!(cmds.len(), 1);
+        match &cmds[0] {
+            Command::Focus(id) => assert_eq!(id, "12345"),
+            _ => panic!("expected Focus"),
+        }
+    }
+
+    #[test]
+    fn test_parse_screenshot_title_flag() {
+        // Script format doesn't support --title (that's a CLI-only flag).
+        // Just test that the path is extracted correctly.
+        let script = r#"screenshot "out.png""#;
+        let cmds = parse_script(script).unwrap();
+        assert_eq!(cmds.len(), 1);
+        match &cmds[0] {
+            Command::Screenshot(path, _, _) => assert_eq!(path, "\"out.png\""),
             _ => panic!("expected Screenshot"),
         }
     }
