@@ -12,6 +12,8 @@ pub struct WindowInfo {
     pub width: u32,
     pub height: u32,
     pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 impl WindowInfo {
@@ -434,6 +436,23 @@ mod os_impl {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn pid_for_window(w: &xcap::Window) -> Option<u32> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let id: usize = w.id().ok()? as usize;
+    let hwnd = id as windows_sys::Win32::Foundation::HWND;
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut pid);
+    }
+    if pid == 0 { None } else { Some(pid) }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pid_for_window(_w: &xcap::Window) -> Option<u32> {
+    None
+}
+
 /// Enumerate all on-screen windows with geometry and focused state.
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
     let windows = Window::all().map_err(|e| anyhow::anyhow!("Failed to list windows: {e}"))?;
@@ -460,6 +479,7 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
             width: w_width,
             height: w_height,
             is_active,
+            pid: pid_for_window(&w),
         });
     }
     Ok(list)
@@ -592,6 +612,24 @@ mod tests {
     }
 
     #[test]
+    fn test_window_info_pid_serializes() {
+        let w = WindowInfo {
+            id: "123".into(),
+            title: "t".into(),
+            app_name: "a".into(),
+            x: 0, y: 0, width: 100, height: 100,
+            is_active: false,
+            pid: Some(4242),
+        };
+        let v = serde_json::to_value(&w).unwrap();
+        assert_eq!(v["pid"], 4242);
+
+        let w2 = WindowInfo { pid: None, ..w };
+        let v2 = serde_json::to_value(&w2).unwrap();
+        assert!(v2.get("pid").is_none());
+    }
+
+    #[test]
     fn test_center_is_midpoint() {
         let w = WindowInfo {
             id: "1".into(),
@@ -602,6 +640,7 @@ mod tests {
             width: 400,
             height: 300,
             is_active: false,
+            pid: None,
         };
         assert_eq!(w.center(), (300, 350));
     }
