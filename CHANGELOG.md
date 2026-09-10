@@ -11,6 +11,11 @@
 ### Fixed
 - `capture_screen_with_cursor` en Linux usaba `xdotool getcursor` (comando inexistente); ahora `getmouselocation --shell`.
 
+### Added
+- `mk window alt-tab [n]` (Wayland-safe switcher; `cmd+tab` en macOS).
+- `mk daemon install [--apply]`: regla udev para correr mk-daemon sin root.
+- `mk doctor` detecta IPC de compositores opt-in (`hyprctl`, `swaymsg`).
+
 ## [0.7.0] - Unreleased
 
 ### Added

@@ -278,6 +278,12 @@ enum WindowAction {
         #[arg(long, default_value = "400ms")]
         interval: String,
     },
+    /// Cycle focus with Alt+Tab (input simulation; the Wayland-safe switcher)
+    AltTab {
+        /// How many times to press it (default: 1)
+        #[arg(default_value_t = 1)]
+        count: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -329,6 +335,12 @@ enum DaemonAction {
     Stop,
     /// Restart the running daemon (stop + start, requires root)
     Restart,
+    /// Print (or --apply) a udev rule so mk-daemon runs without root
+    Install {
+        /// Actually write /etc/udev/rules.d/99-mk-uinput.rules (needs root)
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+    },
     /// Check if daemon is running
     Status,
 }
@@ -497,6 +509,7 @@ fn main() -> Result<()> {
                     DaemonAction::Start => daemon_start(),
                     DaemonAction::Stop => daemon_stop(),
                     DaemonAction::Restart => daemon_restart(),
+                    DaemonAction::Install { apply } => daemon_install(apply),
                     DaemonAction::Status => daemon_status(),
                 };
             }
@@ -798,6 +811,18 @@ fn handle_window(action: WindowAction) -> Result<()> {
             let w = windows::wait_for_window(&title, exact, t, i)?;
             println!("{}", serde_json::to_string_pretty(&w)?);
         }
+        WindowAction::AltTab { count } => {
+            // macOS switches apps with cmd+tab, everywhere else alt+tab.
+            let combo = if cfg!(target_os = "macos") { "cmd+tab" } else { "alt+tab" };
+            let backend = input::detect_backend()?;
+            for n in 0..count {
+                backend.press_key(combo)?;
+                if n + 1 < count {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                }
+            }
+            println!("Sent {combo} {count} time(s)");
+        }
     }
     Ok(())
 }
@@ -906,6 +931,47 @@ fn daemon_restart() -> Result<()> {
     daemon_start()
 }
 
+/// udev rule granting the `input` group rw access to /dev/uinput, so
+/// mk-daemon runs without root after the user joins that group.
+#[cfg(target_os = "linux")]
+fn uinput_udev_rule() -> &'static str {
+    "# mk uinput access — lets mk-daemon run without root.\nKERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"\n"
+}
+
+#[cfg(target_os = "linux")]
+fn daemon_install(apply: bool) -> Result<()> {
+    use std::process::Command;
+
+    const RULE_PATH: &str = "/etc/udev/rules.d/99-mk-uinput.rules";
+    let rule = uinput_udev_rule();
+
+    if !apply {
+        println!("To run mk-daemon WITHOUT root, install this udev rule:\n");
+        println!("{rule}");
+        println!("Apply automatically with: sudo mk daemon install --apply");
+        println!("Then:");
+        println!("  1. sudo usermod -aG input $USER && re-login");
+        println!("  2. sudo udevadm control --reload-rules && sudo udevadm trigger");
+        println!("  3. start the daemon without sudo: mk-daemon &");
+        return Ok(());
+    }
+
+    std::fs::write(RULE_PATH, rule)
+        .context(format!("Failed to write {RULE_PATH} (run with sudo)"))?;
+    let status = Command::new("udevadm")
+        .args(["control", "--reload-rules"])
+        .status()
+        .context("Failed to run udevadm (is udev installed?)")?;
+    if !status.success() {
+        bail!("udevadm control --reload-rules failed");
+    }
+    println!("Installed {RULE_PATH}. Next:");
+    println!("  1. sudo usermod -aG input $USER && re-login");
+    println!("  2. sudo udevadm trigger");
+    println!("  3. mk-daemon &");
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn daemon_status() -> Result<()> {
     if input::daemon::daemon_is_running() {
@@ -952,5 +1018,33 @@ mod cli_tests {
         assert!(matches!(cli.command, Commands::Ui { .. }));
         let cli = Cli::try_parse_from(["mk", "click", "10", "20", "--focus", "123"]).expect("click --focus parse");
         assert!(matches!(cli.command, Commands::Click { .. }));
+    }
+
+    #[test]
+    fn test_alt_tab_parses_with_default_count() {
+        let cli = Cli::try_parse_from(["mk", "window", "alt-tab"]).expect("alt-tab parse");
+        match cli.command {
+            Commands::Window { action } => match action {
+                WindowAction::AltTab { count } => assert_eq!(count, 1),
+                _ => panic!("expected AltTab"),
+            },
+            _ => panic!("expected Window"),
+        }
+        let cli = Cli::try_parse_from(["mk", "window", "alt-tab", "3"]).expect("alt-tab 3 parse");
+        match cli.command {
+            Commands::Window { action } => match action {
+                WindowAction::AltTab { count } => assert_eq!(count, 3),
+                _ => panic!("expected AltTab"),
+            },
+            _ => panic!("expected Window"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_udev_rule_content() {
+        let rule = super::uinput_udev_rule();
+        assert!(rule.contains("KERNEL==\"uinput\""));
+        assert!(rule.contains("GROUP=\"input\""));
     }
 }

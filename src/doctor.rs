@@ -150,6 +150,18 @@ fn print_window_control() {
                 ),
                 Err(e) => println!("  window enumeration error: {e}"),
             }
+            // Opt-in compositor IPC (Phase 4, not wired into `mk window` yet):
+            // report what's available so users know a DE-specific path exists.
+            let mut ipc = Vec::new();
+            if tool_exists("hyprctl") {
+                ipc.push("hyprctl (Hyprland)");
+            }
+            if tool_exists("swaymsg") {
+                ipc.push("swaymsg (Sway/i3)");
+            }
+            if !ipc.is_empty() {
+                println!("  compositor IPC available (opt-in, manual use): {}", ipc.join(", "));
+            }
         } else {
             println!("  backend: x11 (xcb/EWMH)");
             println!("  [✓] enumerate/focus windows (X11 apps)");
