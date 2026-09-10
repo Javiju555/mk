@@ -53,6 +53,37 @@ pub fn find_input(placeholder: &str) -> Result<Option<UiElement>> {
     }))
 }
 
+#[cfg(target_os = "windows")]
+pub mod windows_uia;
+
+#[cfg(target_os = "windows")]
+pub use windows_uia::{ui_click, ui_set_value, ui_toggle, ui_tree_for_window};
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_tree_for_window(_window_id: &str) -> Result<Vec<UiElement>> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_click(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_toggle(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_set_value(
+    _window_id: &str,
+    _query: &str,
+    _value: &str,
+    _mode: &MatchMode,
+) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +112,12 @@ mod tests {
         assert!(match_name("Track 01", r"^Track \d+$", &MatchMode::Regex));
         assert!(!match_name("Track AB", r"^Track \d+$", &MatchMode::Regex));
         assert!(!match_name("cualquier cosa", "(unclosed", &MatchMode::Regex), "regex inválida = false, no panic");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_uia_module_loads() {
+        let automation = crate::accessibility::windows_uia::automation();
+        assert!(automation.is_ok(), "UIAutomation::new() debe inicializar COM");
     }
 }
