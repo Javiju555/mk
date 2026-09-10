@@ -243,6 +243,21 @@ enum WindowAction {
         /// Window id
         id: String,
     },
+    /// Wait until a window appears (polls list internally)
+    Wait {
+        /// Substring to match against window title (use --exact for full match)
+        #[arg(long)]
+        title: String,
+        /// Exact match instead of substring
+        #[arg(long, default_value_t = false)]
+        exact: bool,
+        /// How long to wait, e.g. "10s" (default "10s")
+        #[arg(long, default_value = "10s")]
+        timeout: String,
+        /// Poll interval, e.g. "400ms" (default "400ms")
+        #[arg(long, default_value = "400ms")]
+        interval: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -643,6 +658,12 @@ fn handle_window(action: WindowAction) -> Result<()> {
         WindowAction::Close { id } => {
             windows::close_window(&id)?;
             println!("Closed window {id}");
+        }
+        WindowAction::Wait { title, exact, timeout, interval } => {
+            let t = mk::parser::parse_duration(&timeout)?;
+            let i = mk::parser::parse_duration(&interval)?;
+            let w = windows::wait_for_window(&title, exact, t, i)?;
+            println!("{}", serde_json::to_string_pretty(&w)?);
         }
     }
     Ok(())

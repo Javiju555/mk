@@ -485,6 +485,40 @@ pub fn list_windows() -> Result<Vec<WindowInfo>> {
     Ok(list)
 }
 
+/// Poll `list_fn` until a window matches `title` or `timeout` expires.
+/// `exact=false` = substring case-insensitive; `exact=true` = trim + case-insensitive equality.
+pub fn wait_for_window_with(
+    title: &str,
+    exact: bool,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+    mut list_fn: impl FnMut() -> anyhow::Result<Vec<WindowInfo>>,
+) -> anyhow::Result<WindowInfo> {
+    let deadline = std::time::Instant::now() + timeout;
+    let query = title.trim().to_lowercase();
+    loop {
+        let list = list_fn().unwrap_or_default();
+        let hit = list.into_iter().find(|w| {
+            if exact {
+                w.title.trim().to_lowercase() == query
+            } else {
+                w.title.to_lowercase().contains(&query)
+            }
+        });
+        if let Some(w) = hit {
+            return Ok(w);
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("Timeout esperando ventana con título '{title}' tras {}s", timeout.as_secs());
+        }
+        std::thread::sleep(interval);
+    }
+}
+
+pub fn wait_for_window(title: &str, exact: bool, timeout: std::time::Duration, interval: std::time::Duration) -> anyhow::Result<WindowInfo> {
+    wait_for_window_with(title, exact, timeout, interval, list_windows)
+}
+
 /// The currently focused window, if any backend can report it.
 pub fn active_window() -> Result<WindowInfo> {
     let list = list_windows()?;
@@ -627,6 +661,42 @@ mod tests {
         let w2 = WindowInfo { pid: None, ..w };
         let v2 = serde_json::to_value(&w2).unwrap();
         assert!(v2.get("pid").is_none());
+    }
+
+    #[test]
+    fn test_wait_for_window_timeout() {
+        use std::time::Duration;
+        let start = std::time::Instant::now();
+        let res = wait_for_window_with(
+            "ventana-que-no-existe-xyz",
+            false,
+            Duration::from_millis(120),
+            Duration::from_millis(30),
+            || Ok(vec![]),
+        );
+        assert!(res.is_err());
+        assert!(start.elapsed() >= Duration::from_millis(100));
+        assert!(res.unwrap_err().to_string().contains("Timeout"));
+    }
+
+    #[test]
+    fn test_wait_for_window_finds_on_retry() {
+        use std::cell::Cell;
+        use std::time::Duration;
+        let calls = Cell::new(0);
+        let res = wait_for_window_with("Code", false, Duration::from_secs(2), Duration::from_millis(10), || {
+            calls.set(calls.get() + 1);
+            if calls.get() < 3 {
+                Ok(vec![])
+            } else {
+                Ok(vec![WindowInfo {
+                    id: "1".into(), title: "Visual Studio Code".into(), app_name: "Code".into(),
+                    x: 0, y: 0, width: 800, height: 600, is_active: true, pid: None,
+                }])
+            }
+        });
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap().id, "1");
     }
 
     #[test]
