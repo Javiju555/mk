@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex};
 const SOCKET_PATH: &str = "/tmp/mk-daemon.sock";
 const UINPUT_NAME: &str = "mk-virtual-keyboard";
 
+/// Daemon protocol version, reported via the `VERSION` command (`OK:<n>`).
+/// Bump when adding/removing protocol commands so `mk doctor` can spot a
+/// stale daemon binary shadowing a newer client.
+const PROTOCOL_VERSION: u32 = 1;
+
 // Linux input event codes
 const EV_KEY: u16 = 0x01;
 const EV_SYN: u16 = 0x00;
@@ -553,8 +558,10 @@ impl UinputDevice {
         Ok(())
     }
 
-    fn press_key_combo(&self, combo: &str) {
-        // Parse "ctrl+s" style combos
+    fn press_key_combo(&self, combo: &str) -> bool {
+        // Parse "ctrl+s" style combos. Returns true when at least one known
+        // modifier or main key matched — false means the caller should report
+        // an unknown-key error instead of silently doing nothing.
         let parts: Vec<&str> = combo.split('+').collect();
         let mut modifiers: Vec<u16> = Vec::new();
         let mut main_key: Option<u16> = None;
@@ -578,7 +585,9 @@ impl UinputDevice {
         }
 
         // Press and release main key
+        let mut recognized = !modifiers.is_empty();
         if let Some(key) = main_key {
+            recognized = true;
             self.press_key(key);
             std::thread::sleep(std::time::Duration::from_millis(12));
             self.release_key(key);
@@ -592,6 +601,8 @@ impl UinputDevice {
         for &m in modifiers.iter().rev() {
             self.release_key(m);
         }
+
+        recognized
     }
 }
 
@@ -647,6 +658,7 @@ fn handle_client(mut stream: UnixStream, device: Arc<Mutex<UinputDevice>>) {
                         let mut dev = device.lock().unwrap();
                         match msg {
                             "PING" => "OK".to_string(),
+                            "VERSION" => format!("OK:{PROTOCOL_VERSION}"),
                             text if text.starts_with("TYPE:") => {
                                 let raw = &text[5..];
                                 // Client escapes \n→\\n and \\→\\\\ before sending.
@@ -658,8 +670,11 @@ fn handle_client(mut stream: UnixStream, device: Arc<Mutex<UinputDevice>>) {
                             }
                             key if key.starts_with("KEY:") => {
                                 let key = &key[4..];
-                                dev.press_key_combo(key);
-                                "OK".to_string()
+                                if dev.press_key_combo(key) {
+                                    "OK".to_string()
+                                } else {
+                                    format!("ERR:unknown key:{key}")
+                                }
                             }
                             move_cmd if move_cmd.starts_with("MOVE:") => {
                                 let parts: Vec<&str> = move_cmd[5..].split(':').collect();

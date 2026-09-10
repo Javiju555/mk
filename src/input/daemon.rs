@@ -167,3 +167,15 @@ pub fn ping_daemon() -> Result<()> {
         bail!("Unexpected daemon response: {response}")
     }
 }
+
+/// Daemon protocol version (`VERSION` command, `OK:<n>`). Daemons older than
+/// the VERSION command answer `ERR:unknown command`, which surfaces here as
+/// an error — callers should report that as "legacy/unknown", not crash.
+pub fn daemon_version() -> Result<String> {
+    let mut stream = connect()?;
+    let response = send_command(&mut stream, "VERSION")?;
+    match response.strip_prefix("OK:") {
+        Some(v) => Ok(v.to_string()),
+        None => bail!("Unexpected daemon response: {response}"),
+    }
+}

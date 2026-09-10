@@ -327,6 +327,8 @@ enum DaemonAction {
     Start,
     /// Stop the running daemon
     Stop,
+    /// Restart the running daemon (stop + start, requires root)
+    Restart,
     /// Check if daemon is running
     Status,
 }
@@ -494,6 +496,7 @@ fn main() -> Result<()> {
                 return match action {
                     DaemonAction::Start => daemon_start(),
                     DaemonAction::Stop => daemon_stop(),
+                    DaemonAction::Restart => daemon_restart(),
                     DaemonAction::Status => daemon_status(),
                 };
             }
@@ -647,9 +650,33 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(target_os = "macos")]
             {
-                eprintln!("mouse-pos is only supported on Windows");
+                match input::macos::cursor_position() {
+                    Ok((x, y)) => println!("x={x}, y={y}"),
+                    Err(e) => eprintln!("Failed to get cursor position: {e}"),
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                // X11 only: Wayland exposes no protocol for global cursor position.
+                match std::process::Command::new("xdotool")
+                    .args(["getmouselocation", "--shell"])
+                    .output()
+                {
+                    Ok(o) if o.status.success() => {
+                        let stdout = String::from_utf8_lossy(&o.stdout);
+                        match mk::vision::parse_getmouselocation(&stdout) {
+                            Some((x, y)) => println!("x={x}, y={y}"),
+                            None => eprintln!("Failed to parse xdotool output (X11 only)"),
+                        }
+                    }
+                    _ => eprintln!("mouse-pos on Linux needs xdotool on X11; on Wayland the cursor position is not queryable"),
+                }
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+            {
+                eprintln!("mouse-pos is only supported on Windows, macOS, and Linux/X11");
             }
         }
         Commands::Screenshot { path, window, monitor, raw, quality, cursor, crop, zoom } => {
@@ -669,7 +696,11 @@ fn main() -> Result<()> {
                         {
                             mk::vision::capture_screen_with_cursor_options(&path, _format, quality, &crop, zoom)?;
                         }
-                        #[cfg(not(target_os = "windows"))]
+                        #[cfg(any(target_os = "macos", target_os = "linux"))]
+                        {
+                            mk::vision::capture_screen_with_cursor_options(&path, _format, quality, &crop, zoom)?;
+                        }
+                        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
                         {
                             mk::vision::capture_monitor_with_options(monitor_idx, &path, _format, quality, &crop, zoom)?;
                         }
@@ -686,7 +717,11 @@ fn main() -> Result<()> {
                     {
                         mk::vision::capture_screen_with_cursor(&path, _format, quality)?;
                     }
-                    #[cfg(not(target_os = "windows"))]
+                    #[cfg(any(target_os = "macos", target_os = "linux"))]
+                    {
+                        mk::vision::capture_screen_with_cursor(&path, _format, quality)?;
+                    }
+                    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
                     {
                         interp.run(&[parser::Command::ScreenshotMonitor(monitor_idx, path, raw, quality)])?;
                     }
@@ -865,12 +900,23 @@ fn daemon_stop() -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+fn daemon_restart() -> Result<()> {
+    daemon_stop()?;
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    daemon_start()
+}
+
+#[cfg(target_os = "linux")]
 fn daemon_status() -> Result<()> {
     if input::daemon::daemon_is_running() {
         println!("mk-daemon: running (socket /tmp/mk-daemon.sock)");
         match input::daemon::ping_daemon() {
             Ok(()) => println!("  Response: OK"),
             Err(e) => println!("  Ping failed: {e}"),
+        }
+        match input::daemon::daemon_version() {
+            Ok(v) => println!("  Protocol version: {v}"),
+            Err(e) => println!("  Protocol version: unknown ({e})"),
         }
     } else {
         println!("mk-daemon: not running");

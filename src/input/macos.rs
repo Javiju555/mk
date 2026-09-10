@@ -292,6 +292,23 @@ impl Backend for MacosBackend {
     }
 }
 
+/// Current cursor position in mk's physical-pixel contract (the space
+/// `mk screenshot` captures and `mk click` targets): the live OS readback
+/// is in logical points, so scale it the same way `mouse_move` does in
+/// reverse. Used by `mk mouse-pos` and `screenshot --cursor`.
+pub fn cursor_position() -> Result<(i32, i32)> {
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|_| anyhow!("Failed to create CGEventSource"))?;
+    let event = CGEvent::new(source)
+        .map_err(|_| anyhow!("Failed to read cursor position"))?;
+    let pt = event.location();
+    let scale = primary_scale_factor();
+    Ok((
+        (pt.x * scale).round() as i32,
+        (pt.y * scale).round() as i32,
+    ))
+}
+
 impl MacosBackend {
     fn press_combo(&self, source: &CGEventSource, combo: &str) -> Result<()> {
         let parts: Vec<&str> = combo.split('+').collect();

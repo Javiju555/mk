@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `mk mouse-pos` en macOS (nativo) y Linux/X11 (vía `xdotool getmouselocation`); en Wayland error honesto.
+- `mk screenshot --cursor` en macOS y Linux (antes solo Windows; en Linux se arregla además el comando roto `xdotool getcursor`).
+- Protocolo daemon `VERSION` + `mk daemon restart` / versión en `mk daemon status`; `mk doctor` reporta daemon, versión de protocolo y acceso a `/dev/uinput`.
+- Daemon `KEY:` con tecla desconocida responde `ERR:unknown key` en vez de OK silencioso.
+
+### Fixed
+- `capture_screen_with_cursor` en Linux usaba `xdotool getcursor` (comando inexistente); ahora `getmouselocation --shell`.
+
 ## [0.7.0] - Unreleased
 
 ### Added

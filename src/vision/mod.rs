@@ -142,6 +142,25 @@ pub fn capture_screen_with_options(dest_path: &str, format: ScreenshotFormat, qu
     Ok(())
 }
 
+/// Parse `xdotool getmouselocation --shell` output (`X=<n>` / `Y=<n>`
+/// lines, plus SCREEN=/WINDOW= lines we ignore). Returns None when either
+/// coordinate is missing or unparsable — the caller falls back to (0, 0).
+pub fn parse_getmouselocation(output: &str) -> Option<(i32, i32)> {
+    let mut x = None;
+    let mut y = None;
+    for line in output.lines() {
+        if let Some(v) = line.strip_prefix("X=") {
+            x = v.trim().parse().ok();
+        } else if let Some(v) = line.strip_prefix("Y=") {
+            y = v.trim().parse().ok();
+        }
+    }
+    match (x, y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    }
+}
+
 /// Capture screen and draw a crosshair at the current cursor position
 pub fn capture_screen_with_cursor(dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
     capture_screen_with_cursor_options(dest_path, format, quality, &None, 1)
@@ -159,25 +178,23 @@ pub fn capture_screen_with_cursor_options(dest_path: &str, format: ScreenshotFor
         }
     };
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let cursor_pos = crate::input::macos::cursor_position().unwrap_or((0, 0));
+
+    #[cfg(target_os = "linux")]
     let cursor_pos = {
         use std::process::Command;
-        let output = Command::new("xdotool").args(["getcursor"]).output();
-        match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let x: i32 = parts[0].parse().unwrap_or(0);
-                    let y: i32 = parts[1].parse().unwrap_or(0);
-                    (x, y)
-                } else {
-                    (0, 0)
-                }
-            }
-            Err(_) => (0, 0),
-        }
+        Command::new("xdotool")
+            .args(["getmouselocation", "--shell"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| parse_getmouselocation(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or((0, 0))
     };
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let cursor_pos = (0, 0);
 
     // Capture the screen
     let monitors = Monitor::all().map_err(|e| anyhow::anyhow!("Failed to list monitors: {e}"))?;
@@ -299,6 +316,15 @@ mod tests {
         assert_eq!(parse_crop_rect("10,20,300,200").unwrap(), (10, 20, 300, 200));
         assert!(parse_crop_rect("10,20").is_err());
         assert!(parse_crop_rect("a,b,c,d").is_err());
+    }
+
+    #[test]
+    fn test_parse_getmouselocation() {
+        let out = "X=1234\nY=567\nSCREEN=0\nWINDOW=12345678\n";
+        assert_eq!(parse_getmouselocation(out), Some((1234, 567)));
+        assert_eq!(parse_getmouselocation("X=10\n"), None);
+        assert_eq!(parse_getmouselocation("garbage\n"), None);
+        assert_eq!(parse_getmouselocation(""), None);
     }
 
     #[test]

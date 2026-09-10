@@ -52,6 +52,8 @@ pub fn run() -> Result<()> {
             clipboard::ClipboardTool::None => "none",
         });
 
+        print_daemon();
+
         print_window_control();
 
         println!("\nRecommendations (pacman -S):");
@@ -84,9 +86,43 @@ pub fn run() -> Result<()> {
         });
 
         print_window_control();
+
+        #[cfg(target_os = "macos")]
+        {
+            println!("\nmacOS notes:");
+            println!("  input needs Accessibility permission: System Settings → Privacy & Security → Accessibility → enable your terminal app");
+            println!("  mouse-pos and screenshot --cursor use the native cursor (no daemon needed)");
+        }
     }
 
     Ok(())
+}
+
+/// Report mk-daemon socket liveness, protocol version, and /dev/uinput
+/// accessibility so callers know whether daemon-backed input (mouse on
+/// Linux) can work here, and can spot a stale daemon shadowing a new client.
+#[cfg(target_os = "linux")]
+fn print_daemon() {
+    println!("\nDaemon (mk-daemon):");
+    if input::daemon::daemon_is_running() {
+        println!("  [✓] socket live (/tmp/mk-daemon.sock)");
+        match input::daemon::ping_daemon() {
+            Ok(()) => println!("  [✓] PING OK"),
+            Err(e) => println!("  [✗] ping failed: {e}"),
+        }
+        match input::daemon::daemon_version() {
+            Ok(v) => println!("  protocol version: {v}"),
+            Err(e) => println!("  protocol version: unknown ({e})"),
+        }
+    } else {
+        println!("  [ ] not running (no live socket) — start: sudo mk-daemon");
+    }
+    // Opening /dev/uinput O_RDWR has no side effects; it just proves the
+    // daemon *could* run here (as root) or not (permission denied).
+    match std::fs::OpenOptions::new().read(true).write(true).open("/dev/uinput") {
+        Ok(_) => println!("  [✓] /dev/uinput accessible (daemon can run)"),
+        Err(e) => println!("  [ ] /dev/uinput not accessible ({e}) — daemon needs root"),
+    }
 }
 
 /// Report the window-control capability of the current session so callers

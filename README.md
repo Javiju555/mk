@@ -98,6 +98,20 @@ mk scroll --horizontal -- -2
 
 Las coordenadas de pantalla `(X, Y)` en píxeles se detectan de forma automática respecto a tu monitor principal y se escalan transparentemente a la tableta absoluta.
 
+### Posición del cursor y daemon (Linux)
+
+```bash
+# Ver posición actual del cursor (Windows/macOS nativo; Linux solo X11 con xdotool)
+mk mouse-pos
+
+# Gestionar mk-daemon (Linux, requiere root para /dev/uinput)
+sudo mk-daemon            # arrancar en foreground
+sudo mk daemon start      # arrancar
+sudo mk daemon stop       # parar
+sudo mk daemon restart    # reiniciar
+mk daemon status          # estado + versión de protocolo
+```
+
 ### Captura de pantalla (Screenshots)
 
 Toma una captura de pantalla del monitor primario y la guarda en la ruta indicada de forma nativa:
