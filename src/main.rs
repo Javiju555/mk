@@ -152,6 +152,7 @@ enum Commands {
     /// Scroll the mouse wheel
     Scroll {
         /// Number of scroll clicks (negative for down/left, positive for up/right)
+        #[arg(allow_hyphen_values = true)]
         clicks: i32,
         /// Scroll horizontally instead of vertically
         #[arg(long)]
@@ -333,6 +334,7 @@ enum ScheduledAction {
     /// Scroll the mouse wheel
     Scroll {
         /// Number of scroll clicks
+        #[arg(allow_hyphen_values = true)]
         clicks: i32,
         /// Scroll horizontally instead of vertically
         #[arg(long)]
@@ -713,4 +715,22 @@ fn daemon_status() -> Result<()> {
         println!("  or:     sudo mk daemon start");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_scroll_negative_parses_without_double_dash() {
+        let cli = Cli::try_parse_from(["mk", "scroll", "-6"]).expect("scroll -6 should parse");
+        match cli.command {
+            Commands::Scroll { clicks, horizontal } => {
+                assert_eq!(clicks, -6);
+                assert!(!horizontal);
+            }
+            _ => panic!("expected Scroll"),
+        }
+    }
 }
