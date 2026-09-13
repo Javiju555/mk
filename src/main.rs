@@ -318,28 +318,100 @@ enum UiAction {
         /// Filter by role (e.g. "button")
         #[arg(long)]
         role: Option<String>,
+        /// Filter by exact automation id (stable across relabels/locales)
+        #[arg(long)]
+        id: Option<String>,
     },
-    /// Invoke (click) a control by name — no focus or coordinates needed
+    /// Invoke (click) a control by name or id — no focus or coordinates needed
     Click {
         #[arg(long)] window: String,
-        #[arg(long)] name: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
         #[arg(long)] regex: bool,
+        /// Double-click instead of single click
+        #[arg(long, default_value_t = false)]
+        double: bool,
+        /// Right-click instead of left click
+        #[arg(long, default_value_t = false, conflicts_with = "double")]
+        right: bool,
     },
-    /// Toggle a checkbox/switch by name
+    /// Toggle a checkbox/switch by name or id
     Toggle {
         #[arg(long)] window: String,
-        #[arg(long)] name: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
         #[arg(long)] regex: bool,
     },
-    /// Set an edit/combo value by name
+    /// Set an edit/combo value by name or id
     SetValue {
         #[arg(long)] window: String,
-        #[arg(long)] name: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
         #[arg(long)] value: String,
         #[arg(long)] contains: bool,
         #[arg(long)] regex: bool,
+    },
+    /// Scroll into view + keyboard-focus a control, so `mk text` lands in it
+    Focus {
+        #[arg(long)] window: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
+    /// Read a control's state (value / toggle / expand) as JSON
+    GetValue {
+        #[arg(long)] window: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
+    /// Expand (or --collapse) a menu/combo/tree node
+    Expand {
+        #[arg(long)] window: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+        /// Collapse instead of expanding
+        #[arg(long, default_value_t = false)]
+        collapse: bool,
+    },
+    /// Wait until a control exists (and optionally is visible + enabled)
+    Wait {
+        #[arg(long)] window: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+        /// How long to wait, e.g. "10s" (default "10s")
+        #[arg(long, default_value = "10s")]
+        timeout: String,
+        /// Poll interval, e.g. "400ms" (default "400ms")
+        #[arg(long, default_value = "400ms")]
+        interval: String,
+        /// Also require enabled + on-screen (default: false, presence only)
+        #[arg(long, default_value_t = false)]
+        visible: bool,
+    },
+    /// Screenshot just one control (window capture cropped to its bounds)
+    Shot {
+        #[arg(long)] window: String,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+        /// Output image path (.png recommended)
+        #[arg(long)] out: String,
+        /// Padding px around the bounds (default: 8, tolerates shadows)
+        #[arg(long, default_value_t = 8)]
+        pad: u32,
+        /// Zoom factor 1-8 (default: 1)
+        #[arg(long, default_value_t = 1)]
+        zoom: u32,
     },
 }
 
@@ -935,10 +1007,33 @@ fn match_mode(contains: bool, regex: bool) -> Result<mk::accessibility::MatchMod
     }
 }
 
+/// Resolve `--name/--contains/--regex` vs `--id` into the (query, mode) the
+/// backend expects. `--id` is exact-match on AutomationId and conflicts with
+/// the name flags.
+fn resolve_target(
+    name: Option<String>,
+    id: Option<String>,
+    contains: bool,
+    regex: bool,
+) -> Result<(String, mk::accessibility::MatchMode)> {
+    use mk::accessibility::MatchMode;
+    match (name, id) {
+        (Some(_), Some(_)) => anyhow::bail!("usa --name o --id, no ambos"),
+        (None, Some(id)) => {
+            if contains || regex {
+                anyhow::bail!("--contains/--regex solo valen con --name")
+            }
+            Ok((id, MatchMode::AutomationId))
+        }
+        (Some(n), None) => Ok((n, match_mode(contains, regex)?)),
+        (None, None) => anyhow::bail!("falta --name o --id"),
+    }
+}
+
 fn handle_ui(action: UiAction) -> Result<()> {
     use mk::accessibility::MatchMode;
     match action {
-        UiAction::Tree { window, contains, regex, role } => {
+        UiAction::Tree { window, contains, regex, role, id } => {
             let mut tree = mk::accessibility::ui_tree_for_window(&window)?;
             if let Some(sub) = contains {
                 tree.retain(|e| mk::accessibility::match_name(&e.name, &sub, &MatchMode::Contains));
@@ -949,21 +1044,57 @@ fn handle_ui(action: UiAction) -> Result<()> {
             if let Some(r) = role {
                 tree.retain(|e| e.role.eq_ignore_ascii_case(&r));
             }
+            if let Some(want) = id {
+                tree.retain(|e| e.automation_id == want);
+            }
             println!("{}", serde_json::to_string_pretty(&tree)?);
         }
-        UiAction::Click { window, name, contains, regex } => {
-            let mode = match_mode(contains, regex)?;
-            let el = mk::accessibility::ui_click(&window, &name, &mode)?;
+        UiAction::Click { window, name, id, contains, regex, double, right } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = if right {
+                mk::accessibility::ui_right_click(&window, &query, &mode)?
+            } else if double {
+                mk::accessibility::ui_double_click(&window, &query, &mode)?
+            } else {
+                mk::accessibility::ui_click(&window, &query, &mode)?
+            };
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
-        UiAction::Toggle { window, name, contains, regex } => {
-            let mode = match_mode(contains, regex)?;
-            let el = mk::accessibility::ui_toggle(&window, &name, &mode)?;
+        UiAction::Toggle { window, name, id, contains, regex } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = mk::accessibility::ui_toggle(&window, &query, &mode)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
-        UiAction::SetValue { window, name, value, contains, regex } => {
-            let mode = match_mode(contains, regex)?;
-            let el = mk::accessibility::ui_set_value(&window, &name, &value, &mode)?;
+        UiAction::SetValue { window, name, id, value, contains, regex } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = mk::accessibility::ui_set_value(&window, &query, &value, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::Focus { window, name, id, contains, regex } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = mk::accessibility::ui_focus(&window, &query, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::GetValue { window, name, id, contains, regex } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let st = mk::accessibility::ui_get_value(&window, &query, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&st)?);
+        }
+        UiAction::Expand { window, name, id, contains, regex, collapse } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let st = mk::accessibility::ui_expand(&window, &query, &mode, collapse)?;
+            println!("{}", serde_json::to_string_pretty(&st)?);
+        }
+        UiAction::Wait { window, name, id, contains, regex, timeout, interval, visible } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let t = mk::parser::parse_duration(&timeout)?;
+            let i = mk::parser::parse_duration(&interval)?;
+            let el = mk::accessibility::ui_wait(&window, &query, &mode, t, i, visible)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::Shot { window, name, id, contains, regex, out, pad, zoom } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = mk::accessibility::ui_shot(&window, &query, &mode, &out, pad, zoom)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
     }
@@ -1208,5 +1339,36 @@ mod cli_tests {
         assert!(matches!(cli.command, Commands::Monitors));
         let cli = Cli::try_parse_from(["mk", "clipboard", "get"]).expect("clipboard get parse");
         assert!(matches!(cli.command, Commands::Clipboard { .. }));
+    }
+
+    #[test]
+    fn test_ui_object_commands_parse() {
+        let cli = Cli::try_parse_from(["mk", "ui", "focus", "--window", "1", "--name", "X"]).expect("ui focus parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "get-value", "--window", "1", "--id", "btn1"]).expect("ui get-value parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "expand", "--window", "1", "--name", "M", "--collapse"]).expect("ui expand parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "wait", "--window", "1", "--name", "D"]).expect("ui wait parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "shot", "--window", "1", "--name", "D", "--out", "d.png"]).expect("ui shot parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "click", "--window", "1", "--name", "B", "--double"]).expect("ui click double parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        // --double + --right conflict
+        assert!(Cli::try_parse_from(["mk", "ui", "click", "--window", "1", "--name", "B", "--double", "--right"]).is_err());
+    }
+
+    #[test]
+    fn test_resolve_target_modes() {
+        use mk::accessibility::MatchMode;
+        let (q, m) = super::resolve_target(Some("B".into()), None, false, false).unwrap();
+        assert_eq!((q.as_str(), m), ("B", MatchMode::Exact));
+        let (q, m) = super::resolve_target(None, Some("btn1".into()), false, false).unwrap();
+        assert_eq!((q.as_str(), m), ("btn1", MatchMode::AutomationId));
+        assert!(super::resolve_target(Some("A".into()), Some("b".into()), false, false).is_err());
+        assert!(super::resolve_target(None, None, false, false).is_err());
+        assert!(super::resolve_target(None, Some("b".into()), true, false).is_err());
+        assert!(super::resolve_target(Some("A".into()), None, true, true).is_err());
     }
 }

@@ -135,23 +135,32 @@ mk screenshot detalle.png -w 329272 --raw --crop 100,200,800,600 --zoom 2
 
 ### Control semántico de UI — `mk ui` (Windows, vía UI Automation)
 
-En Windows, `mk ui` actúa sobre controles por **nombre** (sin coordenadas ni
-foco previo): usa `Invoke`/`Toggle`/`ValuePattern` directamente sobre el
-control. `--name` es exact-match (tras `trim()`, case-insensitive) por
-defecto; `--contains` / `--regex` son opt-in.
+En Windows, `mk ui` actúa sobre controles por **nombre o automation-id** (sin
+coordenadas ni foco previo): usa `Invoke`/`Toggle`/`ValuePattern` directamente
+sobre el control. `--name` es exact-match (tras `trim()`, case-insensitive)
+por defecto; `--contains` / `--regex` son opt-in. `--id` busca por
+AutomationId exacto (estable ante re-etiquetas e idiomas) y no se combina
+con `--name`.
 
 | Comando                                   | Descripción                              |
 |-------------------------------------------|------------------------------------------|
 | `mk ui tree --window <id>`                | Lista elementos UI de la ventana (JSON)  |
 | `mk ui click --window <id> --name "..."`  | Invoca (clic semántico) un control       |
+| `mk ui focus --window <id> --name "..."`  | Lleva a vista + foco de teclado (para `mk text`) |
+| `mk ui get-value --window <id> --name "..."` | Lee valor/toggle/expand del control   |
 | `mk ui toggle --window <id> --name "..."` | Conmuta un checkbox/switch               |
 | `mk ui set-value --window <id> --name "..." --value "..."` | Escribe valor en un edit/combo |
+| `mk ui expand --window <id> --name "..."` | Expande menú/combo/nodo (`--collapse` para colapsar) |
+| `mk ui wait --window <id> --name "..." --timeout 10s` | Espera a que exista el control (`--visible` exige visible+habilitado) |
+| `mk ui shot --window <id> --name "..." --out d.png` | Captura solo ese control |
 
 ```bash
 mk window list
 mk ui tree --window 329272
 mk ui click --window 329272 --name "Mezclador"
-mk screenshot -w 329272 --raw --crop 100,200,800,600 --zoom 2
+mk ui wait --window 329272 --name "Efectos" --timeout 10s --visible
+mk ui get-value --window 329272 --name "Volumen"
+mk ui shot --window 329272 --name "Mezclador" --out mezcla.png
 ```
 
  Relacionado (también 0.7.0): `mk window wait --title "<app>" --timeout 10s`

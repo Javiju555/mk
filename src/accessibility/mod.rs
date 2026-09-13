@@ -13,6 +13,25 @@ pub struct UiElement {
     pub is_enabled: bool,
     #[serde(default)]
     pub is_offscreen: bool,
+    /// Stable per-app control identifier (AutomationId). Empty when the app
+    /// does not set one. Prefer it over `--name`: it survives relabels and
+    /// locales, unlike visible text.
+    #[serde(default)]
+    pub automation_id: String,
+}
+
+/// Readable UI state: the element plus whatever the OS reports through
+/// Value / Toggle / ExpandCollapse patterns (each optional — a plain label
+/// exposes none of them).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiState {
+    pub element: UiElement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toggle_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expand_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,15 +39,19 @@ pub enum MatchMode {
     Exact,
     Contains,
     Regex,
+    /// Exact match on `automation_id` (case-sensitive, no trim): stable ids.
+    AutomationId,
 }
 
 /// Exact = trim + case-insensitive. Contains = substring case-insensitive.
 /// Regex = crate `regex`, case-sensitive salvo `(?i)`; inválida → false.
+/// AutomationId = igualdad exacta (los ids son estables y case-sensitive).
 pub fn match_name(candidate: &str, query: &str, mode: &MatchMode) -> bool {
     match mode {
         MatchMode::Exact => candidate.trim().to_lowercase() == query.trim().to_lowercase(),
         MatchMode::Contains => candidate.to_lowercase().contains(&query.to_lowercase()),
         MatchMode::Regex => regex::Regex::new(query).map(|re| re.is_match(candidate)).unwrap_or(false),
+        MatchMode::AutomationId => candidate == query,
     }
 }
 
@@ -57,7 +80,10 @@ pub fn find_input(placeholder: &str) -> Result<Option<UiElement>> {
 pub mod windows_uia;
 
 #[cfg(target_os = "windows")]
-pub use windows_uia::{ui_click, ui_set_value, ui_toggle, ui_tree_for_window};
+pub use windows_uia::{
+    ui_click, ui_double_click, ui_expand, ui_focus, ui_get_value, ui_right_click,
+    ui_set_value, ui_shot, ui_toggle, ui_tree_for_window, ui_wait,
+};
 
 #[cfg(not(target_os = "windows"))]
 pub fn ui_tree_for_window(_window_id: &str) -> Result<Vec<UiElement>> {
@@ -80,6 +106,60 @@ pub fn ui_set_value(
     _query: &str,
     _value: &str,
     _mode: &MatchMode,
+) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_double_click(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_right_click(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_focus(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_get_value(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiState> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_expand(
+    _window_id: &str,
+    _query: &str,
+    _mode: &MatchMode,
+    _collapse: bool,
+) -> Result<UiState> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_wait(
+    _window_id: &str,
+    _query: &str,
+    _mode: &MatchMode,
+    _timeout: std::time::Duration,
+    _interval: std::time::Duration,
+    _require_visible: bool,
+) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_shot(
+    _window_id: &str,
+    _query: &str,
+    _mode: &MatchMode,
+    _out_path: &str,
+    _pad: u32,
+    _zoom: u32,
 ) -> Result<UiElement> {
     anyhow::bail!("UI Automation solo disponible en Windows")
 }
@@ -119,5 +199,17 @@ mod tests {
     fn test_uia_module_loads() {
         let automation = crate::accessibility::windows_uia::automation();
         assert!(automation.is_ok(), "UIAutomation::new() debe inicializar COM");
+    }
+
+    #[test]
+    fn test_automation_id_match_and_compat() {
+        // Old JSON without automation_id still deserializes (default "").
+        let el: UiElement = serde_json::from_value(serde_json::json!({
+            "role": "button", "name": "OK", "x": 1, "y": 2, "width": 3, "height": 4
+        }))
+        .unwrap();
+        assert_eq!(el.automation_id, "");
+        assert!(match_name("btn_ok", "btn_ok", &MatchMode::AutomationId));
+        assert!(!match_name("btn_ok", "BTN_OK", &MatchMode::AutomationId));
     }
 }
