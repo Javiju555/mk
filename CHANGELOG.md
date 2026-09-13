@@ -23,6 +23,8 @@
 - `mk ui find` (búsqueda en todo el escritorio con contexto de ventana), `mk ui type --text [--clipboard]` (escribe directo en el control), `--window` opcional en `mk ui` (= ventana activa), `mk window focus --title`.
 - `mk ui menu` (menú contextual accesible), `mk ui drag --from/--to` (objeto a objeto), `mk paste` por portapapeles nativo en Windows (rápido para textos largos), acordes en `mk key` (`ctrl+s`, `alt+tab`...), `--focus` en todos los comandos de input (text/enter/key/paste/drag/mouse-down/up).
 - `mk window focus/move/resize` vía Hyprland (`hyprctl dispatch`) y Sway (`swaymsg`) cuando aplica; best-effort en mosaicos, garantizado en flotantes.
+- Backend macOS para `mk ui` (System Events vía `osascript`, sin deps nuevas): `tree/click/double/right/menu/toggle/set-value/type/focus/wait/shot` con escalado Retina; `get-value/expand/find/drag` devuelven error honesto.
+- Helpers `accessibility` compartidos (`shot_element`, `wait_for_element`) para no duplicar entre backends Windows/macOS.
 - `mk vision crop <in> <out> --region x,y,w,h [--zoom N]` y `mk vision info <img>` (post-procesar sin recapturar).
 - `mk window list` en Linux prueba Hyprland (`hyprctl clients -j`) y Sway (`swaymsg -t get_tree`) antes de xcb, con `pid` y foco reales.
 - `mk daemon systemd [--apply]`: servicio de usuario systemd para autostart rootless (con la regla udev).

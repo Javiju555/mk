@@ -236,22 +236,9 @@ pub fn ui_wait(
     interval: std::time::Duration,
     require_visible: bool,
 ) -> Result<UiElement> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if let Ok(el) = find(window_id, query, mode) {
-            let snapshot = to_ui_element(&el)?;
-            if !require_visible || (snapshot.is_enabled && !snapshot.is_offscreen) {
-                return Ok(snapshot);
-            }
-        }
-        if std::time::Instant::now() >= deadline {
-            bail!(
-                "Timeout esperando control '{query}' en ventana {window_id} tras {}s",
-                timeout.as_secs()
-            );
-        }
-        std::thread::sleep(interval);
-    }
+    crate::accessibility::wait_for_element(query, window_id, timeout, interval, require_visible, || {
+        find(window_id, query, mode).and_then(|el| to_ui_element(&el))
+    })
 }
 
 /// Screenshot just this control: capture the window, crop to the element's
@@ -268,27 +255,7 @@ pub fn ui_shot(
 ) -> Result<UiElement> {
     let el = find(window_id, query, mode)?;
     let snapshot = to_ui_element(&el)?;
-    let wins = crate::windows::list_windows()?;
-    let win = wins
-        .into_iter()
-        .find(|w| w.id == window_id)
-        .ok_or_else(|| anyhow::anyhow!("Window {window_id} not found"))?;
-    let rx = snapshot.x.saturating_sub(win.x).saturating_sub(pad as i32).max(0) as u32;
-    let ry = snapshot.y.saturating_sub(win.y).saturating_sub(pad as i32).max(0) as u32;
-    let rw = snapshot.width.saturating_add(2 * pad).max(1);
-    let rh = snapshot.height.saturating_add(2 * pad).max(1);
-    let tmp = std::env::temp_dir().join(format!("mk-ui-shot-{}.png", std::process::id()));
-    let tmp_str = tmp.to_string_lossy().into_owned();
-    crate::vision::capture_window(
-        window_id,
-        &tmp_str,
-        crate::vision::ScreenshotFormat::Raw,
-        100,
-    )
-    .context("capture de ventana falló (¿minimizada?)")?;
-    crate::vision::crop_image_file(&tmp_str, out_path, (rx, ry, rw, rh), zoom, 90)
-        .context("crop al control falló (¿geometría obsoleta? re-lee `mk window list`)")?;
-    let _ = std::fs::remove_file(&tmp);
+    crate::accessibility::shot_element(window_id, &snapshot, out_path, pad, zoom)?;
     Ok(snapshot)
 }
 

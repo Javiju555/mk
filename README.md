@@ -172,6 +172,14 @@ mk paste "texto largo" --focus 2230160  # --focus en TODOS los comandos de input
 > invocación** (o usa `mk ui`, que no necesita foco). Sin eso, el foco puede
 > revertir entre llamadas y la acción aterriza en otra ventana.
 
+### `mk ui` en macOS (vía System Events, sin dependencias nuevas)
+
+Mismos subcomandos; el árbol AX se vuelca con un `osascript` y los clics van
+por CGEvent al centro del control. Coordenadas AX (puntos lógicos) se escalan
+a píxeles físicos (Retina). Funciona: `tree/click/double/right/menu/toggle/
+set-value/type/focus/wait/shot`. Aún no: `get-value/expand/find/drag`
+(error honesto). Receta mac: `mk ui click --name X` y luego `mk text`.
+
  Relacionado (también 0.7.0): `mk window wait --title "<app>" --timeout 10s`
  (espera a que aparezca una ventana), campo `pid` en `mk window list`
  (Windows), y `--focus <id>` en `move`/`click`/`scroll` para enfocar la

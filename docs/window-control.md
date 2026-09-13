@@ -143,10 +143,14 @@ so an agent can plan instead of trial-and-error.
   `[con_id] focus`/`move position`/`resize set`). KWin still pending.
   Caveats: pixel move/resize is best-effort on tiled layouts (guaranteed on
   floating); minimize/maximize/close stay X11-only for now.
-- **Phase 5 (separate, hard):** accessibility tree (`accessibility` module is
-  currently a stub) — UIA on Windows, AXUIElement on macOS, AT-SPI2 on Linux
-  — to enable "click the button labelled X" instead of raw coordinates. AT-SPI
-  coverage on Wayland is app-dependent; treat as best-effort.
+- **Phase 5 (IN PROGRESS):** accessibility tree. Windows UIA done
+  (`mk ui`, 13 subcommands). macOS partial: System Events dump
+  (`src/accessibility/macos_ax.rs`, no new deps) wires tree/click/focus/
+  wait/shot; value/expand/global-find bail honestly. Linux AT-SPI
+  **deferred on purpose**: it needs an async runtime (zbus/tokio) plus a
+  registry tree-walk nobody can validate without a Linux GUI here — a blind
+  implementation would look working while misplacing clicks. Revisit with a
+  Linux desktop to test against (candidate: `atspi` crate).
   **Field evidence (2026-07-20, Windows, see `docs/windows-computer-use-notes.md`):**
   raw coordinate control (`mk move`/`click`/`scroll`) worked correctly once
   window offset + focus were handled right, but named-element clicks via

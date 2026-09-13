@@ -25,7 +25,8 @@ pub struct MacosBackend;
 /// Scale factor of the primary monitor (e.g. 2.0 on Retina), used to convert
 /// mk's physical-pixel input into the logical points CGPoint expects. Falls
 /// back to 1.0 (no-op) if xcap is unavailable or reports something unusable.
-fn primary_scale_factor() -> f64 {
+/// Shared with the AX backend, which gets logical points and must scale up.
+pub(crate) fn primary_scale_factor() -> f64 {
     if let Ok(monitors) = xcap::Monitor::all() {
         if let Some(m) = monitors.first() {
             if let Ok(scale) = m.scale_factor() {
