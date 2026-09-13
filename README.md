@@ -104,6 +104,13 @@ Las coordenadas de pantalla `(X, Y)` en píxeles se detectan de forma automátic
 # Ver posición actual del cursor (Windows/macOS nativo; Linux solo X11 con xdotool)
 mk mouse-pos
 
+# Ver monitores (JSON con geometría, para targeting multi-monitor)
+mk monitors
+
+# Recortar/zoom una captura ya guardada + ver dimensiones
+mk vision crop shot.png detalle.png --region 100,200,800,600 --zoom 2
+mk vision info shot.png
+
 # Gestionar mk-daemon (Linux, requiere root para /dev/uinput)
 sudo mk-daemon            # arrancar en foreground
 sudo mk daemon start      # arrancar

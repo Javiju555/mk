@@ -223,6 +223,11 @@ enum Commands {
     },
     /// List monitors as JSON (index, name, geometry) for multi-monitor targeting
     Monitors,
+    /// Post-process saved images without re-capturing (crop/zoom, dimensions)
+    Vision {
+        #[command(subcommand)]
+        action: VisionAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -345,6 +350,31 @@ enum ClipboardAction {
 }
 
 #[derive(Subcommand)]
+enum VisionAction {
+    /// Crop (and optionally zoom) an image file: --region x,y,w,h [--zoom N]
+    Crop {
+        /// Input image path
+        input: String,
+        /// Output image path (.png → PNG, else JPEG)
+        output: String,
+        /// Crop region x,y,w,h (e.g. "100,200,800,600")
+        #[arg(long)]
+        region: String,
+        /// Zoom factor 1-8 applied after crop (default: 1)
+        #[arg(long, default_value_t = 1)]
+        zoom: u32,
+        /// JPEG quality 1-100 (default: 85, PNG ignores it)
+        #[arg(long, default_value_t = 85)]
+        quality: u8,
+    },
+    /// Print image dimensions as JSON
+    Info {
+        /// Image path
+        input: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum DaemonAction {
     /// Start the daemon (requires root)
     Start,
@@ -352,6 +382,12 @@ enum DaemonAction {
     Stop,
     /// Restart the running daemon (stop + start, requires root)
     Restart,
+    /// Print (or --apply) a user systemd service for mk-daemon autostart
+    Systemd {
+        /// Actually write ~/.config/systemd/user/mk-daemon.service (no root needed)
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+    },
     /// Print (or --apply) a udev rule so mk-daemon runs without root
     Install {
         /// Actually write /etc/udev/rules.d/99-mk-uinput.rules (needs root)
@@ -527,6 +563,7 @@ fn main() -> Result<()> {
                     DaemonAction::Stop => daemon_stop(),
                     DaemonAction::Restart => daemon_restart(),
                     DaemonAction::Install { apply } => daemon_install(apply),
+                    DaemonAction::Systemd { apply } => daemon_systemd(apply),
                     DaemonAction::Status => daemon_status(),
                 };
             }
@@ -792,6 +829,18 @@ fn main() -> Result<()> {
                 .collect();
             println!("{}", serde_json::to_string_pretty(&arr)?);
         }
+        Commands::Vision { action } => match action {
+            VisionAction::Crop { input, output, region, zoom, quality } => {
+                let rect = mk::vision::parse_crop_rect(&region)?;
+                let (w, h) = mk::vision::crop_image_file(&input, &output, rect, zoom, quality)?;
+                println!("Cropped {input} -> {output} ({w}x{h})");
+            }
+            VisionAction::Info { input } => {
+                let img = image::open(&input)
+                    .map_err(|e| anyhow::anyhow!("Failed to open {input}: {e}"))?;
+                println!("{}", serde_json::json!({"path": input, "width": img.width(), "height": img.height()}));
+            }
+        },
         Commands::Daemon { .. } | Commands::Doctor | Commands::Window { .. } | Commands::Ui { .. } => unreachable!(),
     }
 
@@ -1021,6 +1070,50 @@ fn daemon_install(apply: bool) -> Result<()> {
     Ok(())
 }
 
+/// User systemd unit for mk-daemon autostart. Rootless by design: pair it
+/// with `mk daemon install --apply` (udev rule) so /dev/uinput needs no root.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn systemd_unit(mk_daemon_path: &str) -> String {
+    format!(
+        "[Unit]\nDescription=mk virtual input daemon (uinput)\nAfter=graphical-session.target\n\n[Service]\nExecStart={mk_daemon_path} --foreground\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn daemon_systemd(apply: bool) -> Result<()> {
+    use std::process::Command;
+
+    let mk_path = std::env::current_exe()?;
+    let mk_dir = mk_path.parent().unwrap_or(Path::new("."));
+    let daemon_path = mk_dir.join("mk-daemon");
+    let unit = systemd_unit(&daemon_path.to_string_lossy());
+
+    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
+    let unit_path = format!("{home}/.config/systemd/user/mk-daemon.service");
+
+    if !apply {
+        println!("User systemd unit for mk-daemon (pair with `mk daemon install --apply` for rootless uinput):\n");
+        println!("{unit}");
+        println!("Apply with: mk daemon systemd --apply");
+        println!("Then: systemctl --user enable --now mk-daemon");
+        return Ok(());
+    }
+
+    if let Some(parent) = Path::new(&unit_path).parent() {
+        std::fs::create_dir_all(parent).context("Failed to create systemd user dir")?;
+    }
+    std::fs::write(&unit_path, &unit).context(format!("Failed to write {unit_path}"))?;
+    let status = Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status()
+        .context("Failed to run systemctl (is systemd running?)")?;
+    if !status.success() {
+        bail!("systemctl --user daemon-reload failed");
+    }
+    println!("Wrote {unit_path}. Enable with: systemctl --user enable --now mk-daemon");
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn daemon_status() -> Result<()> {
     if input::daemon::daemon_is_running() {
@@ -1095,5 +1188,25 @@ mod cli_tests {
         let rule = super::uinput_udev_rule();
         assert!(rule.contains("KERNEL==\"uinput\""));
         assert!(rule.contains("GROUP=\"input\""));
+    }
+
+    #[test]
+    fn test_systemd_unit_content() {
+        let unit = super::systemd_unit("/usr/local/bin/mk-daemon");
+        assert!(unit.contains("ExecStart=/usr/local/bin/mk-daemon --foreground"));
+        assert!(unit.contains("WantedBy=default.target"));
+        assert!(unit.contains("Restart=on-failure"));
+    }
+
+    #[test]
+    fn test_vision_cli_parses() {
+        let cli = Cli::try_parse_from(["mk", "vision", "crop", "a.png", "b.png", "--region", "10,20,300,200", "--zoom", "2"]).expect("vision crop parse");
+        assert!(matches!(cli.command, Commands::Vision { .. }));
+        let cli = Cli::try_parse_from(["mk", "vision", "info", "a.png"]).expect("vision info parse");
+        assert!(matches!(cli.command, Commands::Vision { .. }));
+        let cli = Cli::try_parse_from(["mk", "monitors"]).expect("monitors parse");
+        assert!(matches!(cli.command, Commands::Monitors));
+        let cli = Cli::try_parse_from(["mk", "clipboard", "get"]).expect("clipboard get parse");
+        assert!(matches!(cli.command, Commands::Clipboard { .. }));
     }
 }

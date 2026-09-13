@@ -95,6 +95,26 @@ fn apply_crop_zoom(img: DynamicImage, crop: &Option<String>, zoom: u32) -> anyho
     Ok(crop_and_zoom(&img, rect, zoom))
 }
 
+/// Crop/zoom an already-saved image file (post-process without re-capturing).
+/// Output format follows the extension (`.png` → PNG, anything else → JPEG
+/// with `quality`). Rect outside the image is an error, not a panic.
+/// Returns the output dimensions so the CLI can report them.
+pub fn crop_image_file(input: &str, output: &str, rect: (u32, u32, u32, u32), zoom: u32, quality: u8) -> Result<(u32, u32)> {
+    let img = image::open(input).map_err(|e| anyhow::anyhow!("Failed to open {input}: {e}"))?;
+    if rect.0 + rect.2 > img.width() || rect.1 + rect.3 > img.height() {
+        anyhow::bail!("crop {rect:?} fuera de imagen {}x{}", img.width(), img.height());
+    }
+    let out = crop_and_zoom(&img, rect, zoom);
+    let format = if output.to_lowercase().ends_with(".png") {
+        ScreenshotFormat::Raw
+    } else {
+        ScreenshotFormat::Compressed
+    };
+    let (w, h) = (out.width(), out.height());
+    save_image(&out, output, format, quality)?;
+    Ok((w, h))
+}
+
 fn save_image(img: &DynamicImage, dest_path: &str, format: ScreenshotFormat, quality: u8) -> Result<()> {
     let path = Path::new(dest_path);
     

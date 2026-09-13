@@ -19,6 +19,9 @@
 - `mk clipboard get` (lee el portapapeles en las 3 plataformas: pbpaste/macOS, wl-paste/xclip/xsel/Linux, CF_UNICODETEXT/Windows).
 - `mk monitors` (lista monitores como JSON con geometría).
 - `mk screenshot --title <substring>` (captura la ventana coincidente inmediatamente, sin `mk window wait` previo).
+- `mk vision crop <in> <out> --region x,y,w,h [--zoom N]` y `mk vision info <img>` (post-procesar sin recapturar).
+- `mk window list` en Linux prueba Hyprland (`hyprctl clients -j`) y Sway (`swaymsg -t get_tree`) antes de xcb, con `pid` y foco reales.
+- `mk daemon systemd [--apply]`: servicio de usuario systemd para autostart rootless (con la regla udev).
 
 ## [0.7.0] - Unreleased
 

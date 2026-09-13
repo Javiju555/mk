@@ -453,8 +453,158 @@ fn pid_for_window(_w: &xcap::Window) -> Option<u32> {
     None
 }
 
+/// Opt-in compositor backends (Phase 4): Hyprland (`hyprctl`) and Sway/i3
+/// (`swaymsg`) expose real Wayland window lists where xcb sees nothing.
+///
+/// Design: pure `parse_*` functions (unit-tested with sample JSON, runnable
+/// on any OS) + thin gated runners that shell out. `list_windows` tries
+/// `compositor_windows()` first on Linux and falls back to xcap, so a
+/// missing/broken binary degrades to today's behavior instead of erroring.
+#[cfg(target_os = "linux")]
+fn compositor_windows() -> Result<Vec<WindowInfo>> {
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+        if let Ok(list) = hyprland_windows() {
+            return Ok(list);
+        }
+    }
+    if std::env::var("SWAYSOCK").is_ok() {
+        if let Ok(list) = sway_windows() {
+            return Ok(list);
+        }
+    }
+    anyhow::bail!("no compositor backend available")
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_windows() -> Result<Vec<WindowInfo>> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["clients", "-j"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("hyprctl failed: {e}"))?;
+    if !out.status.success() {
+        anyhow::bail!("hyprctl clients -j failed");
+    }
+    parse_hyprctl_clients(&String::from_utf8_lossy(&out.stdout))
+}
+
+#[cfg(target_os = "linux")]
+fn sway_windows() -> Result<Vec<WindowInfo>> {
+    let out = std::process::Command::new("swaymsg")
+        .args(["-t", "get_tree"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("swaymsg failed: {e}"))?;
+    if !out.status.success() {
+        anyhow::bail!("swaymsg -t get_tree failed");
+    }
+    parse_sway_tree(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Parse `hyprctl clients -j` (array of {address,at:[x,y],size:[w,h],
+/// title,class,focused,pid}). Missing/invalid entries are skipped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_hyprctl_clients(json: &str) -> Result<Vec<WindowInfo>> {
+    let clients: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| anyhow::anyhow!("hyprctl JSON: {e}"))?;
+    let mut list = Vec::new();
+    for c in clients.as_array().cloned().unwrap_or_default() {
+        let at = c.get("at").and_then(|v| v.as_array());
+        let size = c.get("size").and_then(|v| v.as_array());
+        let (Some(at), Some(size)) = (at, size) else {
+            continue;
+        };
+        let (Some(x), Some(y)) = (at.first().and_then(|v| v.as_i64()), at.get(1).and_then(|v| v.as_i64())) else {
+            continue;
+        };
+        let (Some(w), Some(h)) = (size.first().and_then(|v| v.as_u64()), size.get(1).and_then(|v| v.as_u64())) else {
+            continue;
+        };
+        list.push(WindowInfo {
+            id: c.get("address").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+            title: c.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            app_name: c.get("class").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            x: x as i32,
+            y: y as i32,
+            width: w as u32,
+            height: h as u32,
+            is_active: c.get("focused").and_then(|v| v.as_bool()).unwrap_or(false),
+            pid: c.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32).filter(|p| *p != 0),
+        });
+    }
+    Ok(list)
+}
+
+/// A sway tree node is a *view* (real window) when it carries `app_id`
+/// (native Wayland) or `window_properties` (XWayland).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn sway_is_view(node: &serde_json::Value) -> bool {
+    node.get("app_id").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+        || node.get("window_properties").is_some()
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn sway_collect(node: &serde_json::Value, out: &mut Vec<WindowInfo>) {
+    if sway_is_view(node) {
+        if let Some(rect) = node.get("rect") {
+            let x = rect.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            let y = rect.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            let w = rect.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let h = rect.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            if w > 0 && h > 0 {
+                let app = node
+                    .get("app_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        node.get("window_properties")
+                            .and_then(|p| p.get("class"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_default();
+                out.push(WindowInfo {
+                    id: node.get("id").map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
+                    title: node.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    app_name: app,
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    is_active: node.get("focused").and_then(|v| v.as_bool()).unwrap_or(false),
+                    pid: node.get("pid").and_then(|v| v.as_i64()).filter(|p| *p > 0).map(|p| p as u32),
+                });
+            }
+        }
+    }
+    for key in ["nodes", "floating_nodes"] {
+        if let Some(children) = node.get(key).and_then(|v| v.as_array()) {
+            for child in children {
+                sway_collect(child, out);
+            }
+        }
+    }
+}
+
+/// Parse `swaymsg -t get_tree` (nested nodes/floating_nodes) into flat views.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_sway_tree(json: &str) -> Result<Vec<WindowInfo>> {
+    let tree: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| anyhow::anyhow!("sway JSON: {e}"))?;
+    let mut out = Vec::new();
+    sway_collect(&tree, &mut out);
+    Ok(out)
+}
+
 /// Enumerate all on-screen windows with geometry and focused state.
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
+    // On Linux, a compositor backend (Hyprland/Sway) sees native Wayland
+    // windows that xcb/XWayland cannot. Try it first; fall through to xcap.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(list) = compositor_windows() {
+            return Ok(list);
+        }
+    }
+
     let windows = Window::all().map_err(|e| anyhow::anyhow!("Failed to list windows: {e}"))?;
 
     let mut list = Vec::new();
@@ -713,5 +863,54 @@ mod tests {
             pid: None,
         };
         assert_eq!(w.center(), (300, 350));
+    }
+
+    #[test]
+    fn test_parse_hyprctl_clients() {
+        let json = r#"[
+            {"address":"0xabc","at":[100,200],"size":[800,600],"title":"Terminal","class":"kitty","focused":true,"pid":1234},
+            {"address":"0xdef","at":[0,0],"size":[1920,1080],"title":"Code","class":"Code","focused":false,"pid":5678},
+            {"broken":true}
+        ]"#;
+        let list = parse_hyprctl_clients(json).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, "0xabc");
+        assert_eq!(list[0].title, "Terminal");
+        assert_eq!(list[0].app_name, "kitty");
+        assert_eq!((list[0].x, list[0].y), (100, 200));
+        assert_eq!((list[0].width, list[0].height), (800, 600));
+        assert!(list[0].is_active);
+        assert_eq!(list[0].pid, Some(1234));
+        assert!(!list[1].is_active);
+        assert!(parse_hyprctl_clients("not json").is_err());
+    }
+
+    #[test]
+    fn test_parse_sway_tree() {
+        let json = r#"{
+            "nodes": [
+                {"name": "ws1", "rect": {"x":0,"y":0,"width":1920,"height":1080}, "focused": false,
+                 "nodes": [
+                    {"id": 11, "name": "Terminal", "app_id": "kitty",
+                     "rect": {"x":100,"y":200,"width":800,"height":600},
+                     "focused": true, "pid": 1234, "nodes": [], "floating_nodes": []},
+                    {"name": "split", "rect": {"x":0,"y":0,"width":10,"height":10},
+                     "nodes": [], "floating_nodes": []}
+                 ], "floating_nodes": []}
+            ],
+            "floating_nodes": [
+                {"id": 22, "name": "Dialog", "window_properties": {"class": "Zenity", "title": "Dialog"},
+                 "rect": {"x":10,"y":10,"width":200,"height":100},
+                 "focused": false, "pid": 999, "nodes": [], "floating_nodes": []}
+            ]
+        }"#;
+        let list = parse_sway_tree(json).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].app_name, "kitty");
+        assert_eq!(list[0].pid, Some(1234));
+        assert!(list[0].is_active);
+        assert_eq!(list[1].app_name, "Zenity");
+        assert_eq!((list[1].width, list[1].height), (200, 100));
+        assert!(parse_sway_tree("{bad").is_err());
     }
 }
