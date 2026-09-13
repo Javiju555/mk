@@ -68,6 +68,43 @@ fn resolve_key_code_str(key: &str) -> Option<&'static str> {
         "left" => Some("105"),
         "right" => Some("106"),
         "space" => Some("57"),
+        // digits (evdev: 1=>2 … 9=>10, 0=>11)
+        "1" => Some("2"),
+        "2" => Some("3"),
+        "3" => Some("4"),
+        "4" => Some("5"),
+        "5" => Some("6"),
+        "6" => Some("7"),
+        "7" => Some("8"),
+        "8" => Some("9"),
+        "9" => Some("10"),
+        "0" => Some("11"),
+        // function keys (evdev: F1=>59 … F10=>68, F11=>87, F12=>88)
+        "f1" => Some("59"),
+        "f2" => Some("60"),
+        "f3" => Some("61"),
+        "f4" => Some("62"),
+        "f5" => Some("63"),
+        "f6" => Some("64"),
+        "f7" => Some("65"),
+        "f8" => Some("66"),
+        "f9" => Some("67"),
+        "f10" => Some("68"),
+        "f11" => Some("87"),
+        "f12" => Some("88"),
+        // punctuation (evdev codes, see mk-daemon-linux.rs)
+        "-" | "minus" => Some("12"),
+        "=" | "equal" => Some("13"),
+        "[" | "leftbrace" => Some("26"),
+        "]" | "rightbrace" => Some("27"),
+        ";" | "semicolon" => Some("39"),
+        "'" | "apostrophe" => Some("40"),
+        "`" | "grave" => Some("41"),
+        "\\" | "backslash" => Some("43"),
+        "," | "comma" => Some("51"),
+        "." | "dot" | "period" => Some("52"),
+        "/" | "slash" => Some("53"),
+        _ => None,
         // letters
         "a" => Some("30"),
         "b" => Some("48"),
@@ -108,34 +145,47 @@ fn press_combo(combo: &str) -> Result<()> {
         let part = part.trim();
         if is_modifier(part) {
             modifiers.push(part);
+        } else if main_key.is_some() {
+            // Never silently drop a second main key ("a+b" used to lose "a").
+            anyhow::bail!("Chord takes one main key: {combo}");
         } else {
             main_key = Some(part);
         }
     }
 
-    let mut args = Vec::new();
-    // Press modifiers
+    // Resolve everything up front: unknown names bail instead of vanishing
+    // mid-sequence (previously "ctrl+1" pressed ctrl alone and returned OK).
+    let mut mod_codes = Vec::new();
     for &m in &modifiers {
-        if let Some(code) = resolve_modifier_code(m) {
-            args.push(format!("{code}:1"));
+        match resolve_modifier_code(m) {
+            Some(code) => mod_codes.push(code),
+            None => anyhow::bail!("Unknown modifier: {m}"),
         }
     }
-    // Press and release main key
-    if let Some(key) = main_key {
-        if let Some(code) = resolve_key_code_str(key) {
-            args.push(format!("{code}:1"));
-            args.push(format!("{code}:0"));
-        }
-    }
-    // Release modifiers in reverse order
-    for &m in modifiers.iter().rev() {
-        if let Some(code) = resolve_modifier_code(m) {
-            args.push(format!("{code}:0"));
-        }
+    let main_code = match main_key {
+        Some(key) => Some(
+            resolve_key_code_str(key)
+                .ok_or_else(|| anyhow::anyhow!("Unknown key: {key}"))?,
+        ),
+        None => None,
+    };
+    if mod_codes.is_empty() && main_code.is_none() {
+        anyhow::bail!("Empty key combo: {combo}");
     }
 
-    if args.is_empty() {
-        return Ok(());
+    let mut args = Vec::new();
+    // Press modifiers
+    for code in &mod_codes {
+        args.push(format!("{code}:1"));
+    }
+    // Press and release main key
+    if let Some(code) = main_code {
+        args.push(format!("{code}:1"));
+        args.push(format!("{code}:0"));
+    }
+    // Release modifiers in reverse order
+    for code in mod_codes.iter().rev() {
+        args.push(format!("{code}:0"));
     }
 
     let status = Command::new("ydotool")

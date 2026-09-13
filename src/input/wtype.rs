@@ -66,6 +66,9 @@ fn press_combo(combo: &str) -> Result<()> {
         let part = part.trim();
         if is_modifier(part) {
             modifiers.push(part);
+        } else if main_key.is_some() {
+            // Never silently drop a second main key ("a+b" used to lose "a").
+            anyhow::bail!("Chord takes one main key: {combo}");
         } else {
             main_key = Some(part);
         }
