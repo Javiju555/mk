@@ -34,6 +34,15 @@ pub struct UiState {
     pub expand_state: Option<String>,
 }
 
+/// One desktop-wide search hit: the element plus its top-level window, so
+/// the agent can scope the next action with `--window <window_id>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiHit {
+    pub window_id: String,
+    pub window_title: String,
+    pub element: UiElement,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchMode {
     Exact,
@@ -81,8 +90,9 @@ pub mod windows_uia;
 
 #[cfg(target_os = "windows")]
 pub use windows_uia::{
-    ui_click, ui_double_click, ui_expand, ui_focus, ui_get_value, ui_right_click,
-    ui_set_value, ui_shot, ui_toggle, ui_tree_for_window, ui_wait,
+    ui_click, ui_double_click, ui_expand, ui_find, ui_focus, ui_get_value,
+    ui_right_click, ui_set_value, ui_shot, ui_toggle, ui_tree_for_window, ui_type,
+    ui_wait,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -164,6 +174,22 @@ pub fn ui_shot(
     anyhow::bail!("UI Automation solo disponible en Windows")
 }
 
+#[cfg(not(target_os = "windows"))]
+pub fn ui_find(_query: &str, _mode: &MatchMode) -> Result<Vec<UiHit>> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_type(
+    _window_id: &str,
+    _query: &str,
+    _mode: &MatchMode,
+    _text: &str,
+    _via_clipboard: bool,
+) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +237,27 @@ mod tests {
         assert_eq!(el.automation_id, "");
         assert!(match_name("btn_ok", "btn_ok", &MatchMode::AutomationId));
         assert!(!match_name("btn_ok", "BTN_OK", &MatchMode::AutomationId));
+    }
+
+    #[test]
+    fn test_ui_hit_serializes() {
+        let hit = UiHit {
+            window_id: "123".into(),
+            window_title: "App".into(),
+            element: UiElement {
+                role: "button".into(),
+                name: "OK".into(),
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4,
+                is_enabled: true,
+                is_offscreen: false,
+                automation_id: "btn_ok".into(),
+            },
+        };
+        let v = serde_json::to_value(&hit).unwrap();
+        assert_eq!(v["window_id"], "123");
+        assert_eq!(v["element"]["automation_id"], "btn_ok");
     }
 }

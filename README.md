@@ -145,7 +145,9 @@ con `--name`.
 | Comando                                   | Descripción                              |
 |-------------------------------------------|------------------------------------------|
 | `mk ui tree --window <id>`                | Lista elementos UI de la ventana (JSON)  |
+| `mk ui find --name "..."`                 | Busca en todo el escritorio (devuelve ventana + elemento) |
 | `mk ui click --window <id> --name "..."`  | Invoca (clic semántico) un control       |
+| `mk ui type --name "..." --text "..."`    | Escribe directo en el control (`--clipboard` para texto largo) |
 | `mk ui focus --window <id> --name "..."`  | Lleva a vista + foco de teclado (para `mk text`) |
 | `mk ui get-value --window <id> --name "..."` | Lee valor/toggle/expand del control   |
 | `mk ui toggle --window <id> --name "..."` | Conmuta un checkbox/switch               |
@@ -156,11 +158,11 @@ con `--name`.
 
 ```bash
 mk window list
-mk ui tree --window 329272
-mk ui click --window 329272 --name "Mezclador"
-mk ui wait --window 329272 --name "Efectos" --timeout 10s --visible
-mk ui get-value --window 329272 --name "Volumen"
-mk ui shot --window 329272 --name "Mezclador" --out mezcla.png
+mk ui find --name "Mezclador"          # sin --window: busca en todo el escritorio
+mk ui tree                             # sin --window: usa la ventana activa
+mk ui click --id "btnMezclar"          # AutomationId: estable ante idiomas
+mk ui type --name "Preset" --text "Init" --clipboard
+mk window focus --title "Mezclador"    # foco por título, sin id previo
 ```
 
  Relacionado (también 0.7.0): `mk window wait --title "<app>" --timeout 10s`

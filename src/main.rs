@@ -236,10 +236,13 @@ enum WindowAction {
     List,
     /// Print the currently focused window as JSON
     Active,
-    /// Raise a window to the foreground by its id (best-effort, per-OS)
+    /// Raise a window to the foreground (best-effort, per-OS)
     Focus {
         /// Window id (as reported by `mk window list`)
-        id: String,
+        id: Option<String>,
+        /// ...or title substring (resolved immediately, no wait)
+        #[arg(long)]
+        title: Option<String>,
     },
     /// Move a window to coordinates x, y (best-effort, per-OS)
     Move {
@@ -306,9 +309,9 @@ enum WindowAction {
 enum UiAction {
     /// List UI elements of a window as JSON (name-based targeting)
     Tree {
-        /// Window id (from `mk window list`)
+        /// Window id (from `mk window list`; default: active window)
         #[arg(long)]
-        window: String,
+        window: Option<String>,
         /// Filter: substring (case-insensitive)
         #[arg(long)]
         contains: Option<String>,
@@ -324,7 +327,7 @@ enum UiAction {
     },
     /// Invoke (click) a control by name or id — no focus or coordinates needed
     Click {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -338,7 +341,7 @@ enum UiAction {
     },
     /// Toggle a checkbox/switch by name or id
     Toggle {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -346,7 +349,7 @@ enum UiAction {
     },
     /// Set an edit/combo value by name or id
     SetValue {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] value: String,
@@ -355,7 +358,7 @@ enum UiAction {
     },
     /// Scroll into view + keyboard-focus a control, so `mk text` lands in it
     Focus {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -363,7 +366,7 @@ enum UiAction {
     },
     /// Read a control's state (value / toggle / expand) as JSON
     GetValue {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -371,7 +374,7 @@ enum UiAction {
     },
     /// Expand (or --collapse) a menu/combo/tree node
     Expand {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -382,7 +385,7 @@ enum UiAction {
     },
     /// Wait until a control exists (and optionally is visible + enabled)
     Wait {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -399,7 +402,7 @@ enum UiAction {
     },
     /// Screenshot just one control (window capture cropped to its bounds)
     Shot {
-        #[arg(long)] window: String,
+        #[arg(long)] window: Option<String>,
         #[arg(long)] name: Option<String>,
         #[arg(long)] id: Option<String>,
         #[arg(long)] contains: bool,
@@ -412,6 +415,26 @@ enum UiAction {
         /// Zoom factor 1-8 (default: 1)
         #[arg(long, default_value_t = 1)]
         zoom: u32,
+    },
+    /// Search the whole desktop for a control (no --window needed)
+    Find {
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
+    /// Type text directly into a control (no focus juggling)
+    Type {
+        #[arg(long)] window: Option<String>,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+        /// Text to type
+        #[arg(long)] text: String,
+        /// Paste via clipboard (restored after) for long/Unicode text
+        #[arg(long, default_value_t = false)]
+        clipboard: bool,
     },
 }
 
@@ -947,7 +970,15 @@ fn handle_window(action: WindowAction) -> Result<()> {
             let active = windows::active_window()?;
             println!("{}", serde_json::to_string_pretty(&active)?);
         }
-        WindowAction::Focus { id } => {
+        WindowAction::Focus { id, title } => {
+            let id = match (id, title) {
+                (Some(_), Some(_)) => bail!("usa id o --title, no ambos"),
+                (Some(id), None) => id,
+                (None, Some(t)) => {
+                    mk::windows::wait_for_window(&t, false, Duration::ZERO, Duration::from_millis(100))?.id
+                }
+                (None, None) => bail!("falta id o --title"),
+            };
             windows::focus_window(&id)?;
             println!("Focused window {id}");
         }
@@ -1030,10 +1061,23 @@ fn resolve_target(
     }
 }
 
+/// Window id or, when omitted, the currently active window (so most `mk ui`
+/// calls need no `window list` round-trip first).
+fn resolve_window(window: Option<String>) -> Result<String> {
+    use anyhow::Context;
+    match window {
+        Some(id) => Ok(id),
+        None => Ok(mk::windows::active_window()
+            .context("sin --window y sin ventana activa detectable (usa `mk window list`)")?
+            .id),
+    }
+}
+
 fn handle_ui(action: UiAction) -> Result<()> {
     use mk::accessibility::MatchMode;
     match action {
         UiAction::Tree { window, contains, regex, role, id } => {
+            let window = resolve_window(window)?;
             let mut tree = mk::accessibility::ui_tree_for_window(&window)?;
             if let Some(sub) = contains {
                 tree.retain(|e| mk::accessibility::match_name(&e.name, &sub, &MatchMode::Contains));
@@ -1050,6 +1094,7 @@ fn handle_ui(action: UiAction) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&tree)?);
         }
         UiAction::Click { window, name, id, contains, regex, double, right } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let el = if right {
                 mk::accessibility::ui_right_click(&window, &query, &mode)?
@@ -1061,31 +1106,37 @@ fn handle_ui(action: UiAction) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
         UiAction::Toggle { window, name, id, contains, regex } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let el = mk::accessibility::ui_toggle(&window, &query, &mode)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
         UiAction::SetValue { window, name, id, value, contains, regex } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let el = mk::accessibility::ui_set_value(&window, &query, &value, &mode)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
         UiAction::Focus { window, name, id, contains, regex } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let el = mk::accessibility::ui_focus(&window, &query, &mode)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
         UiAction::GetValue { window, name, id, contains, regex } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let st = mk::accessibility::ui_get_value(&window, &query, &mode)?;
             println!("{}", serde_json::to_string_pretty(&st)?);
         }
         UiAction::Expand { window, name, id, contains, regex, collapse } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let st = mk::accessibility::ui_expand(&window, &query, &mode, collapse)?;
             println!("{}", serde_json::to_string_pretty(&st)?);
         }
         UiAction::Wait { window, name, id, contains, regex, timeout, interval, visible } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let t = mk::parser::parse_duration(&timeout)?;
             let i = mk::parser::parse_duration(&interval)?;
@@ -1093,8 +1144,20 @@ fn handle_ui(action: UiAction) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
         UiAction::Shot { window, name, id, contains, regex, out, pad, zoom } => {
+            let window = resolve_window(window)?;
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let el = mk::accessibility::ui_shot(&window, &query, &mode, &out, pad, zoom)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::Find { name, id, contains, regex } => {
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let hits = mk::accessibility::ui_find(&query, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&hits)?);
+        }
+        UiAction::Type { window, name, id, contains, regex, text, clipboard } => {
+            let window = resolve_window(window)?;
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = mk::accessibility::ui_type(&window, &query, &mode, &text, clipboard)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
         }
     }
@@ -1357,6 +1420,34 @@ mod cli_tests {
         assert!(matches!(cli.command, Commands::Ui { .. }));
         // --double + --right conflict
         assert!(Cli::try_parse_from(["mk", "ui", "click", "--window", "1", "--name", "B", "--double", "--right"]).is_err());
+    }
+
+    #[test]
+    fn test_ui_find_type_and_optional_window_parse() {
+        // --window omitted: resolves to the active window at runtime.
+        let cli = Cli::try_parse_from(["mk", "ui", "click", "--name", "B"]).expect("ui click without window");
+        match cli.command {
+            Commands::Ui { action } => match action {
+                UiAction::Click { window, .. } => assert!(window.is_none()),
+                _ => panic!("expected Click"),
+            },
+            _ => panic!("expected Ui"),
+        }
+        let cli = Cli::try_parse_from(["mk", "ui", "find", "--name", "Save"]).expect("ui find parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "type", "--id", "box1", "--text", "hola", "--clipboard"]).expect("ui type parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "window", "focus", "--title", "Code"]).expect("focus --title parse");
+        match cli.command {
+            Commands::Window { action } => match action {
+                WindowAction::Focus { id, title } => {
+                    assert!(id.is_none());
+                    assert_eq!(title.as_deref(), Some("Code"));
+                }
+                _ => panic!("expected Focus"),
+            },
+            _ => panic!("expected Window"),
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@ use uiautomation::core::UICondition;
 use uiautomation::types::TreeScope;
 use uiautomation::{UIElement, UIAutomation, UITreeWalker};
 
-use crate::accessibility::{MatchMode, UiElement, match_name};
+use crate::accessibility::{MatchMode, UiElement, UiHit, match_name};
 
 pub fn automation() -> Result<UIAutomation> {
     UIAutomation::new().context("UIAutomation::new() falló (COM)")
@@ -322,4 +322,104 @@ pub fn ui_set_value(window_id: &str, query: &str, value: &str, mode: &MatchMode)
             snapshot.role
         ),
     }
+}
+
+/// Type directly into a control via UIA — no focus juggling, no coordinates.
+/// Plain `send_text` for normal input; `--clipboard` pastes through the
+/// clipboard (restored afterwards) for long/Unicode text, needs ctrl+v.
+pub fn ui_type(
+    window_id: &str,
+    query: &str,
+    mode: &MatchMode,
+    text: &str,
+    via_clipboard: bool,
+) -> Result<UiElement> {
+    let el = find(window_id, query, mode)?;
+    let snapshot = to_ui_element(&el)?;
+    if via_clipboard {
+        el.send_text_by_clipboard(text)
+            .context("paste por portapapeles falló (¿el control acepta ctrl+v?)")?;
+    } else {
+        el.send_text(text, 5)
+            .context("send_text falló")?;
+    }
+    Ok(snapshot)
+}
+
+/// Desktop-wide search: walk every top-level window's subtree and return up
+/// to 50 hits with their window context, so the next action can scope with
+/// `--window <window_id>`. Bounded (20k visited nodes) to stay usable on
+/// multi-monitor desktops with huge trees.
+pub fn ui_find(query: &str, mode: &MatchMode) -> Result<Vec<UiHit>> {
+    const VISIT_CAP: usize = 20_000;
+    const HITS_CAP: usize = 50;
+    let automation = automation()?;
+    let root = automation.get_root_element().context("root UIA")?;
+    let condition = automation.create_true_condition().context("true condition")?;
+    let tops = root.find_all(TreeScope::Children, &condition).context("top windows")?;
+    let mut out = Vec::new();
+    let mut visited = 0usize;
+    for top in tops {
+        if out.len() >= HITS_CAP {
+            break;
+        }
+        let window_id = top
+            .get_native_window_handle()
+            .ok()
+            .map(|h| {
+                let n: isize = h.into();
+                (n as usize).to_string()
+            })
+            .unwrap_or_default();
+        let window_title = top.get_name().unwrap_or_default();
+        dfs_find(&top, &condition, query, mode, &window_id, &window_title, &mut out, &mut visited, VISIT_CAP, HITS_CAP)?;
+    }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dfs_find(
+    el: &UIElement,
+    cond: &UICondition,
+    query: &str,
+    mode: &MatchMode,
+    window_id: &str,
+    window_title: &str,
+    out: &mut Vec<UiHit>,
+    visited: &mut usize,
+    visit_cap: usize,
+    hits_cap: usize,
+) -> Result<()> {
+    let Ok(children) = el.find_all(TreeScope::Children, cond) else {
+        return Ok(());
+    };
+    let use_id = *mode == MatchMode::AutomationId;
+    for child in children {
+        if *visited >= visit_cap || out.len() >= hits_cap {
+            break;
+        }
+        *visited += 1;
+        let matched = if use_id {
+            child
+                .get_automation_id()
+                .map(|id| match_name(&id, query, mode))
+                .unwrap_or(false)
+        } else {
+            child
+                .get_name()
+                .map(|name| match_name(&name, query, mode))
+                .unwrap_or(false)
+        };
+        if matched {
+            if let Ok(element) = to_ui_element(&child) {
+                out.push(UiHit {
+                    window_id: window_id.to_string(),
+                    window_title: window_title.to_string(),
+                    element,
+                });
+            }
+        }
+        dfs_find(&child, cond, query, mode, window_id, window_title, out, visited, visit_cap, hits_cap)?;
+    }
+    Ok(())
 }
