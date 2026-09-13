@@ -146,7 +146,44 @@ mod os_impl {
         Ok(())
     }
 
+    /// Run `hyprctl` with prebuilt args; hyper-explicit errors (never silent:
+    /// a renamed dispatcher between Hyprland versions must shout, not vanish).
+    fn run_hyprctl(args: &[String]) -> Result<()> {
+        let status = Command::new("hyprctl")
+            .args(args)
+            .status()
+            .map_err(|e| anyhow::anyhow!("hyprctl failed to run: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            bail!("hyprctl {} failed", args.join(" "))
+        }
+    }
+
+    fn run_swaymsg(args: &[String]) -> Result<()> {
+        let status = Command::new("swaymsg")
+            .args(args)
+            .status()
+            .map_err(|e| anyhow::anyhow!("swaymsg failed to run: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            bail!("swaymsg {} failed", args.join(" "))
+        }
+    }
+
+    /// Pure command builders live next to the parsers below (ungated so their
+    /// tests run on every OS); the runners above just execute the argv.
+
     pub fn focus_window(window_id: &str) -> Result<()> {
+        // Compositor first: on Hyprland/Sway this reaches native Wayland
+        // windows that xdotool/xcb cannot see at all.
+        if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+            return run_hyprctl(&super::hyprctl_focus_cmd(window_id));
+        }
+        if std::env::var("SWAYSOCK").is_ok() {
+            return run_swaymsg(&super::swaymsg_focus_cmd(window_id));
+        }
         check_wayland_unsupported("focus")?;
         let status = Command::new("xdotool")
             .arg("windowactivate")
@@ -163,6 +200,12 @@ mod os_impl {
     }
 
     pub fn move_window(window_id: &str, x: i32, y: i32) -> Result<()> {
+        if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+            return run_hyprctl(&super::hyprctl_move_cmd(window_id, x, y));
+        }
+        if std::env::var("SWAYSOCK").is_ok() {
+            return run_swaymsg(&super::swaymsg_move_cmd(window_id, x, y));
+        }
         check_wayland_unsupported("move")?;
         let status = Command::new("xdotool")
             .args(["windowmove", window_id, &x.to_string(), &y.to_string()])
@@ -175,6 +218,12 @@ mod os_impl {
     }
 
     pub fn resize_window(window_id: &str, width: u32, height: u32) -> Result<()> {
+        if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+            return run_hyprctl(&super::hyprctl_resize_cmd(window_id, width, height));
+        }
+        if std::env::var("SWAYSOCK").is_ok() {
+            return run_swaymsg(&super::swaymsg_resize_cmd(window_id, width, height));
+        }
         check_wayland_unsupported("resize")?;
         let status = Command::new("xdotool")
             .args(["windowsize", window_id, &width.to_string(), &height.to_string()])
@@ -594,6 +643,61 @@ fn parse_sway_tree(json: &str) -> Result<Vec<WindowInfo>> {
     Ok(out)
 }
 
+/// Exact hyprctl/swaymsg argv in one place, unit-tested verbatim so a
+/// compositor version drift is caught by reading the test.
+/// NOTE (tiled layouts): pixel move/resize is best-effort — a tiling layout
+/// may ignore or reabsorb it. Guaranteed only on floating windows.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn hyprctl_focus_cmd(id: &str) -> Vec<String> {
+    vec!["dispatch".into(), "focuswindow".into(), format!("address:{id}")]
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn hyprctl_move_cmd(id: &str, x: i32, y: i32) -> Vec<String> {
+    vec![
+        "dispatch".into(),
+        "movewindowpixel".into(),
+        "exact".into(),
+        format!("{x}"),
+        format!("{y},address:{id}"),
+    ]
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn hyprctl_resize_cmd(id: &str, w: u32, h: u32) -> Vec<String> {
+    vec![
+        "dispatch".into(),
+        "resizewindowpixel".into(),
+        "exact".into(),
+        format!("{w}"),
+        format!("{h},address:{id}"),
+    ]
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn swaymsg_focus_cmd(id: &str) -> Vec<String> {
+    vec![format!("[con_id=\"{id}\"]"), "focus".into()]
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn swaymsg_move_cmd(id: &str, x: i32, y: i32) -> Vec<String> {
+    vec![format!("[con_id=\"{id}\"]"), "move".into(), "position".into(), format!("{x} {y}")]
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn swaymsg_resize_cmd(id: &str, w: u32, h: u32) -> Vec<String> {
+    // Canonical i3/sway form (swaymsg joins argv with spaces first).
+    vec![
+        format!("[con_id=\"{id}\"]"),
+        "resize".into(),
+        "set".into(),
+        "width".into(),
+        format!("{w}px"),
+        "height".into(),
+        format!("{h}px"),
+    ]
+}
+
 /// Enumerate all on-screen windows with geometry and focused state.
 pub fn list_windows() -> Result<Vec<WindowInfo>> {
     // On Linux, a compositor backend (Hyprland/Sway) sees native Wayland
@@ -912,5 +1016,30 @@ mod tests {
         assert_eq!(list[1].app_name, "Zenity");
         assert_eq!((list[1].width, list[1].height), (200, 100));
         assert!(parse_sway_tree("{bad").is_err());
+    }
+
+    #[test]
+    fn test_compositor_cmd_shapes() {
+        assert_eq!(
+            hyprctl_focus_cmd("0xabc"),
+            vec!["dispatch", "focuswindow", "address:0xabc"]
+        );
+        assert_eq!(
+            hyprctl_move_cmd("0xabc", 100, -20),
+            vec!["dispatch", "movewindowpixel", "exact", "100", "-20,address:0xabc"]
+        );
+        assert_eq!(
+            hyprctl_resize_cmd("0xabc", 800, 600),
+            vec!["dispatch", "resizewindowpixel", "exact", "800", "600,address:0xabc"]
+        );
+        assert_eq!(swaymsg_focus_cmd("11"), vec!["[con_id=\"11\"]", "focus"]);
+        assert_eq!(
+            swaymsg_move_cmd("11", 100, 200),
+            vec!["[con_id=\"11\"]", "move", "position", "100 200"]
+        );
+        assert_eq!(
+            swaymsg_resize_cmd("11", 800, 600),
+            vec!["[con_id=\"11\"]", "resize", "set", "width", "800px", "height", "600px"]
+        );
     }
 }

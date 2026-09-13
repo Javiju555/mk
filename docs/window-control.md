@@ -136,8 +136,13 @@ so an agent can plan instead of trial-and-error.
   "control the PC via win32/mac APIs" is genuinely delivered.
 - **Phase 3:** Wayland input-simulation helpers (`alt-tab`, `focus-interactive`,
   overview-driven selection) — the pragmatic substitute for focus-by-id.
-- **Phase 4 (opt-in):** compositor backends (hyprctl/swaymsg/kwin) behind
-  runtime detection, for users on those DEs.
+- **Phase 4 (opt-in, PARTIALLY DONE):** compositor backends behind runtime
+  detection. `mk window list` tries Hyprland (`hyprctl clients -j`) and Sway
+  (`swaymsg -t get_tree`) before xcb, and `focus`/`move`/`resize` dispatch
+  through them (`focuswindow`/`movewindowpixel`/`resizewindowpixel`,
+  `[con_id] focus`/`move position`/`resize set`). KWin still pending.
+  Caveats: pixel move/resize is best-effort on tiled layouts (guaranteed on
+  floating); minimize/maximize/close stay X11-only for now.
 - **Phase 5 (separate, hard):** accessibility tree (`accessibility` module is
   currently a stub) — UIA on Windows, AXUIElement on macOS, AT-SPI2 on Linux
   — to enable "click the button labelled X" instead of raw coordinates. AT-SPI
