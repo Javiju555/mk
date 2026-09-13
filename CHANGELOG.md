@@ -21,6 +21,7 @@
 - `mk screenshot --title <substring>` (captura la ventana coincidente inmediatamente, sin `mk window wait` previo).
 - `mk ui` por objetos: `--id` (AutomationId estable) en todos los subcomandos; `mk ui focus` (ScrollIntoView + SetFocus para `mk text`); `mk ui get-value` (lee valor/toggle/expand); `mk ui expand [--collapse]`; `mk ui wait --timeout --visible`; `mk ui shot --out` (captura solo el control); `click --double/--right`; fallback a click nativo UIA cuando no hay InvokePattern.
 - `mk ui find` (búsqueda en todo el escritorio con contexto de ventana), `mk ui type --text [--clipboard]` (escribe directo en el control), `--window` opcional en `mk ui` (= ventana activa), `mk window focus --title`.
+- `mk ui menu` (menú contextual accesible), `mk ui drag --from/--to` (objeto a objeto), `mk paste` por portapapeles nativo en Windows (rápido para textos largos), acordes en `mk key` (`ctrl+s`, `alt+tab`...), `--focus` en todos los comandos de input (text/enter/key/paste/drag/mouse-down/up).
 - `mk vision crop <in> <out> --region x,y,w,h [--zoom N]` y `mk vision info <img>` (post-procesar sin recapturar).
 - `mk window list` en Linux prueba Hyprland (`hyprctl clients -j`) y Sway (`swaymsg -t get_tree`) antes de xcb, con `pid` y foco reales.
 - `mk daemon systemd [--apply]`: servicio de usuario systemd para autostart rootless (con la regla udev).

@@ -90,9 +90,9 @@ pub mod windows_uia;
 
 #[cfg(target_os = "windows")]
 pub use windows_uia::{
-    ui_click, ui_double_click, ui_expand, ui_find, ui_focus, ui_get_value,
-    ui_right_click, ui_set_value, ui_shot, ui_toggle, ui_tree_for_window, ui_type,
-    ui_wait,
+    ui_click, ui_double_click, ui_drag, ui_expand, ui_find, ui_focus, ui_get_value,
+    ui_right_click, ui_set_value, ui_shot, ui_show_menu, ui_toggle, ui_tree_for_window,
+    ui_type, ui_wait,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -187,6 +187,21 @@ pub fn ui_type(
     _text: &str,
     _via_clipboard: bool,
 ) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_show_menu(_window_id: &str, _query: &str, _mode: &MatchMode) -> Result<UiElement> {
+    anyhow::bail!("UI Automation solo disponible en Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ui_drag(
+    _window_id: &str,
+    _from: &str,
+    _to: &str,
+    _mode: &MatchMode,
+) -> Result<(UiElement, UiElement)> {
     anyhow::bail!("UI Automation solo disponible en Windows")
 }
 

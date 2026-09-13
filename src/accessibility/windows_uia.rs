@@ -423,3 +423,34 @@ fn dfs_find(
     }
     Ok(())
 }
+
+/// Invoke the accessible context menu on a control (the pattern-correct
+/// alternative to right-clicking blind coordinates).
+pub fn ui_show_menu(window_id: &str, query: &str, mode: &MatchMode) -> Result<UiElement> {
+    let el = find(window_id, query, mode)?;
+    let snapshot = to_ui_element(&el)?;
+    el.show_context_menu().context(format!(
+        "context menu falló en '{}' (role={})",
+        snapshot.name, snapshot.role
+    ))?;
+    Ok(snapshot)
+}
+
+/// Drag one object onto another (sliders, drag-and-drop): both ends resolve
+/// like `find`, sharing the same match mode.
+pub fn ui_drag(
+    window_id: &str,
+    from: &str,
+    to: &str,
+    mode: &MatchMode,
+) -> Result<(UiElement, UiElement)> {
+    let src = find(window_id, from, mode)?;
+    let dst = find(window_id, to, mode)?;
+    let from_snap = to_ui_element(&src)?;
+    let to_snap = to_ui_element(&dst)?;
+    src.drag_to(&dst).context(format!(
+        "drag '{}' -> '{}' falló",
+        from_snap.name, to_snap.name
+    ))?;
+    Ok((from_snap, to_snap))
+}

@@ -50,37 +50,11 @@ impl Backend for WindowsBackend {
     }
 
     fn press_key(&self, key: &str) -> Result<()> {
-        // Map key string to virtual key code (wVk)
-        let vk = match key.to_lowercase().as_str() {
-            "enter" => VK_RETURN,
-            "backspace" => VK_BACK,
-            "tab" => VK_TAB,
-            "escape" | "esc" => VK_ESCAPE,
-            "space" => VK_SPACE,
-            "up" => VK_UP,
-            "down" => VK_DOWN,
-            "left" => VK_LEFT,
-            "right" => VK_RIGHT,
-            "pageup" | "pgup" => VK_PRIOR,
-            "pagedown" | "pgdn" => VK_NEXT,
-            "home" => VK_HOME,
-            "end" => VK_END,
-            "insert" => VK_INSERT,
-            "delete" | "del" => VK_DELETE,
-            "ctrl" | "control" => VK_CONTROL,
-            "shift" => VK_SHIFT,
-            "alt" => VK_MENU,
-            "super" | "win" | "meta" => VK_LWIN, // Left Windows key
-            _ => {
-                // If it's a single character, we might map it or try to map it using VkKeyScan
-                if key.len() == 1 {
-                    let ch = key.chars().next().unwrap() as u16;
-                    unsafe { VkKeyScanW(ch) as u16 & 0xFF }
-                } else {
-                    anyhow::bail!("Unsupported key: {}", key);
-                }
-            }
-        };
+        // "ctrl+v" style chords: modifiers down, main key, modifiers up.
+        if key.contains('+') {
+            return Self::press_chord(key);
+        }
+        let vk = Self::vk_of(key)?;
 
         let mut inputs = [
             INPUT {
@@ -122,7 +96,6 @@ impl Backend for WindowsBackend {
     fn display_name(&self) -> &str {
         "Windows native"
     }
-
     fn mouse_move(&self, x: i32, y: i32, duration_ms: u64) -> Result<()> {
         // Win32 SendInput coordinates for absolute mouse movement are normalized from 0 to 65535.
         // But SendInput also has MOUSEEVENTF_MOVE. If we want raw screen pixels, we can also use set_cursor_pos.
@@ -270,6 +243,102 @@ impl Backend for WindowsBackend {
         unsafe {
             SendInput(1, &mut input, size_of::<INPUT>() as i32);
         }
+        Ok(())
+    }
+}
+
+/// Free helpers shared by `press_key` (single keys and "ctrl+s" chords).
+/// Inherent block: trait impls cannot hold non-member items.
+impl WindowsBackend {
+    fn vk_of(key: &str) -> Result<u16> {
+        Ok(match key.to_lowercase().as_str() {
+            "enter" => VK_RETURN,
+            "backspace" => VK_BACK,
+            "tab" => VK_TAB,
+            "escape" | "esc" => VK_ESCAPE,
+            "space" => VK_SPACE,
+            "up" => VK_UP,
+            "down" => VK_DOWN,
+            "left" => VK_LEFT,
+            "right" => VK_RIGHT,
+            "pageup" | "pgup" => VK_PRIOR,
+            "pagedown" | "pgdn" => VK_NEXT,
+            "home" => VK_HOME,
+            "end" => VK_END,
+            "insert" => VK_INSERT,
+            "delete" | "del" => VK_DELETE,
+            "ctrl" | "control" => VK_CONTROL,
+            "shift" => VK_SHIFT,
+            "alt" => VK_MENU,
+            "super" | "win" | "meta" => VK_LWIN, // Left Windows key
+            _ => {
+                // If it's a single character, we might map it or try to map it using VkKeyScan
+                if key.len() == 1 {
+                    let ch = key.chars().next().unwrap() as u16;
+                    unsafe { VkKeyScanW(ch) as u16 & 0xFF }
+                } else {
+                    anyhow::bail!("Unsupported key: {}", key);
+                }
+            }
+        })
+    }
+
+    fn key_input(vk: u16, key_up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: if key_up { KEYEVENTF_KEYUP } else { 0 },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    fn send_inputs(inputs: &mut [INPUT]) {
+        unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_mut_ptr(),
+                size_of::<INPUT>() as i32,
+            );
+        }
+    }
+
+    /// "ctrl+s" style chord: modifiers down, main key tap, modifiers up.
+    /// Modifiers: ctrl/control, shift, alt, super/win/meta. Exactly one main key.
+    fn press_chord(combo: &str) -> Result<()> {
+        let mut mods = Vec::new();
+        let mut main: Option<u16> = None;
+        for part in combo.split('+') {
+            let p = part.trim().to_lowercase();
+            match p.as_str() {
+                "ctrl" | "control" => mods.push(VK_CONTROL),
+                "shift" => mods.push(VK_SHIFT),
+                "alt" => mods.push(VK_MENU),
+                "super" | "win" | "meta" => mods.push(VK_LWIN),
+                _ => {
+                    if main.is_some() {
+                        anyhow::bail!("Chord takes one main key: {combo}");
+                    }
+                    main = Some(Self::vk_of(&p)?);
+                }
+            }
+        }
+        let main = main.ok_or_else(|| anyhow::anyhow!("No main key in chord: {combo}"))?;
+        let mut inputs = Vec::with_capacity(2 * mods.len() + 2);
+        for &m in &mods {
+            inputs.push(Self::key_input(m, false));
+        }
+        inputs.push(Self::key_input(main, false));
+        inputs.push(Self::key_input(main, true));
+        for &m in mods.iter().rev() {
+            inputs.push(Self::key_input(m, true));
+        }
+        Self::send_inputs(&mut inputs);
         Ok(())
     }
 }

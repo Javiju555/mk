@@ -155,6 +155,8 @@ con `--name`.
 | `mk ui expand --window <id> --name "..."` | Expande menú/combo/nodo (`--collapse` para colapsar) |
 | `mk ui wait --window <id> --name "..." --timeout 10s` | Espera a que exista el control (`--visible` exige visible+habilitado) |
 | `mk ui shot --window <id> --name "..." --out d.png` | Captura solo ese control |
+| `mk ui menu --window <id> --name "..."` | Abre el menú contextual accesible del control |
+| `mk ui drag --window <id> --from A --to B` | Arrastra un objeto sobre otro |
 
 ```bash
 mk window list
@@ -163,7 +165,12 @@ mk ui tree                             # sin --window: usa la ventana activa
 mk ui click --id "btnMezclar"          # AutomationId: estable ante idiomas
 mk ui type --name "Preset" --text "Init" --clipboard
 mk window focus --title "Mezclador"    # foco por título, sin id previo
+mk paste "texto largo" --focus 2230160  # --focus en TODOS los comandos de input (text/enter/key/paste/click/move/...)
 ```
+
+> Regla de oro para agentes: **todo input lleva `--focus <id>` en la misma
+> invocación** (o usa `mk ui`, que no necesita foco). Sin eso, el foco puede
+> revertir entre llamadas y la acción aterriza en otra ventana.
 
  Relacionado (también 0.7.0): `mk window wait --title "<app>" --timeout 10s`
  (espera a que aparezca una ventana), campo `pid` en `mk window list`

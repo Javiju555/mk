@@ -60,7 +60,17 @@ pub fn paste(text: &str, shortcut: &str, backend: &dyn Backend) -> Result<()> {
         Ok(())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        // Native clipboard + paste shortcut: instant for long texts, and it
+        // matches this command's contract (Linux already does wl-copy/xclip
+        // + shortcut). Needs `press_key` chord support ("ctrl+v").
+        crate::output::clipset::set_clipboard_text(text)?;
+        backend.press_key(shortcut)?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = shortcut; // unused parameter warning bypass
         backend.type_text(text)?;

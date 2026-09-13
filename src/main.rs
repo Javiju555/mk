@@ -41,13 +41,23 @@ enum Commands {
     Text {
         /// The message to type
         message: String,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Press Enter
-    Enter,
+    Enter {
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
+    },
     /// Press a key combination
     Key {
         /// Key to press, e.g. "ctrl+s", "enter", "alt+tab"
         key: String,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Wait for a duration
     Wait {
@@ -61,6 +71,9 @@ enum Commands {
         /// Shortcut key combination to trigger paste (default: ctrl+v)
         #[arg(short, long, default_value = "ctrl+v")]
         shortcut: String,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Execute an action after a delay
     In {
@@ -142,18 +155,27 @@ enum Commands {
         /// Duration of slide (e.g. "500ms", default "500ms")
         #[arg(short, long)]
         duration: Option<String>,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Press and hold a mouse button
     MouseDown {
         /// Button to press: left, right, middle (default: left)
         #[arg(default_value = "left")]
         button: String,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Release a mouse button
     MouseUp {
         /// Button to release: left, right, middle (default: left)
         #[arg(default_value = "left")]
         button: String,
+        /// Focus window id in-process before acting (avoids focus-revert between invocations)
+        #[arg(long)]
+        focus: Option<String>,
     },
     /// Scroll the mouse wheel
     Scroll {
@@ -436,6 +458,28 @@ enum UiAction {
         #[arg(long, default_value_t = false)]
         clipboard: bool,
     },
+    /// Invoke the accessible context menu on a control
+    Menu {
+        #[arg(long)] window: Option<String>,
+        #[arg(long)] name: Option<String>,
+        #[arg(long)] id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
+    /// Drag one object onto another (sliders, drag-and-drop)
+    Drag {
+        #[arg(long)] window: Option<String>,
+        /// Source control name
+        #[arg(long)] from: Option<String>,
+        /// Source control automation id
+        #[arg(long)] from_id: Option<String>,
+        /// Target control name
+        #[arg(long)] to: Option<String>,
+        /// Target control automation id
+        #[arg(long)] to_id: Option<String>,
+        #[arg(long)] contains: bool,
+        #[arg(long)] regex: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -625,6 +669,23 @@ impl ScheduledAction {
 }
 
 fn main() -> Result<()> {
+    // Windows gives the main thread a 1 MB stack; clap's generated parser for
+    // mk's (large and growing) CLI overflows it in debug builds. Run everything
+    // on an 8 MB thread instead — the same trick rustc itself uses. Release
+    // builds never overflowed, but this keeps `cargo run` usable everywhere.
+    match std::thread::Builder::new()
+        .name("mk-main".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(real_main)
+        .map_err(|e| anyhow::anyhow!("Failed to spawn main thread: {e}"))?
+        .join()
+    {
+        Ok(r) => r,
+        Err(_) => Err(anyhow::anyhow!("mk main thread panicked")),
+    }
+}
+
+fn real_main() -> Result<()> {
     // Make the process per-monitor-DPI-aware so SetCursorPos/GetCursorPos (and xcap's
     // screenshot capture) operate in physical pixels, matching mk's coordinate contract.
     // Without this, an unaware process gets coordinates silently rescaled by Windows on
@@ -704,20 +765,24 @@ fn main() -> Result<()> {
     let mut interp = Interpreter::new(backend.as_ref(), cli.dry_run, logger.as_mut());
 
     match cli.command {
-        Commands::Text { message } => {
+        Commands::Text { message, focus } => {
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::Text(message)])?;
         }
-        Commands::Enter => {
+        Commands::Enter { focus } => {
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::Enter])?;
         }
-        Commands::Key { key } => {
+        Commands::Key { key, focus } => {
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::Key(key)])?;
         }
         Commands::Wait { duration } => {
             let dur = parser::parse_duration(&duration)?;
             interp.run(&[parser::Command::Wait(dur)])?;
         }
-        Commands::Paste { text, shortcut } => {
+        Commands::Paste { text, shortcut, focus } => {
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::Paste(text, shortcut)])?;
         }
         Commands::In { duration, action } => {
@@ -768,36 +833,30 @@ fn main() -> Result<()> {
             interp.run(&[parser::Command::PasteDir(path)])?;
         }
         Commands::Move { x, y, duration, focus } => {
-            if let Some(id) = focus.as_deref() {
-                mk::windows::focus_window(id)?;
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
+            focus_first(focus.as_deref())?;
             let dur = duration.unwrap_or_else(|| "0s".to_string());
             interp.run(&[parser::Command::MouseMove(x.to_string(), y.to_string(), dur)])?;
         }
         Commands::Click { x, y, button, duration, focus } => {
-            if let Some(id) = focus.as_deref() {
-                mk::windows::focus_window(id)?;
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
+            focus_first(focus.as_deref())?;
             let dur = duration.unwrap_or_else(|| "0s".to_string());
             interp.run(&[parser::Command::MouseClick(x.to_string(), y.to_string(), button, dur)])?;
         }
-        Commands::Drag { x1, y1, x2, y2, duration } => {
+        Commands::Drag { x1, y1, x2, y2, duration, focus } => {
+            focus_first(focus.as_deref())?;
             let dur = duration.unwrap_or_else(|| "500ms".to_string());
             interp.run(&[parser::Command::MouseDrag(x1.to_string(), y1.to_string(), x2.to_string(), y2.to_string(), dur)])?;
         }
-        Commands::MouseDown { button } => {
+        Commands::MouseDown { button, focus } => {
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::MouseDown(button)])?;
         }
-        Commands::MouseUp { button } => {
+        Commands::MouseUp { button, focus } => {
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::MouseUp(button)])?;
         }
         Commands::Scroll { clicks, horizontal, focus } => {
-            if let Some(id) = focus.as_deref() {
-                mk::windows::focus_window(id)?;
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
+            focus_first(focus.as_deref())?;
             interp.run(&[parser::Command::MouseScroll(clicks.to_string(), horizontal.to_string())])?;
         }
         Commands::MousePos => {
@@ -1061,6 +1120,17 @@ fn resolve_target(
     }
 }
 
+/// Focus a window in-process before injecting input (avoids the focus-revert
+/// that happens between separate CLI invocations — the #1 cause of actions
+/// landing in the wrong window). Every input-injecting command takes --focus.
+fn focus_first(focus: Option<&str>) -> Result<()> {
+    if let Some(id) = focus {
+        mk::windows::focus_window(id)?;
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    Ok(())
+}
+
 /// Window id or, when omitted, the currently active window (so most `mk ui`
 /// calls need no `window list` round-trip first).
 fn resolve_window(window: Option<String>) -> Result<String> {
@@ -1159,6 +1229,22 @@ fn handle_ui(action: UiAction) -> Result<()> {
             let (query, mode) = resolve_target(name, id, contains, regex)?;
             let el = mk::accessibility::ui_type(&window, &query, &mode, &text, clipboard)?;
             println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::Menu { window, name, id, contains, regex } => {
+            let window = resolve_window(window)?;
+            let (query, mode) = resolve_target(name, id, contains, regex)?;
+            let el = mk::accessibility::ui_show_menu(&window, &query, &mode)?;
+            println!("{}", serde_json::to_string_pretty(&el)?);
+        }
+        UiAction::Drag { window, from, from_id, to, to_id, contains, regex } => {
+            let window = resolve_window(window)?;
+            let (from_q, mode) = resolve_target(from, from_id, contains, regex)?;
+            let (to_q, to_mode) = resolve_target(to, to_id, contains, regex)?;
+            if mode != to_mode {
+                bail!("--from/--to deben usar el mismo modo (ambos --name o ambos --id)");
+            }
+            let (from_el, to_el) = mk::accessibility::ui_drag(&window, &from_q, &to_q, &mode)?;
+            println!("{}", serde_json::json!({"from": from_el, "to": to_el}));
         }
     }
     Ok(())
@@ -1433,10 +1519,6 @@ mod cli_tests {
             },
             _ => panic!("expected Ui"),
         }
-        let cli = Cli::try_parse_from(["mk", "ui", "find", "--name", "Save"]).expect("ui find parse");
-        assert!(matches!(cli.command, Commands::Ui { .. }));
-        let cli = Cli::try_parse_from(["mk", "ui", "type", "--id", "box1", "--text", "hola", "--clipboard"]).expect("ui type parse");
-        assert!(matches!(cli.command, Commands::Ui { .. }));
         let cli = Cli::try_parse_from(["mk", "window", "focus", "--title", "Code"]).expect("focus --title parse");
         match cli.command {
             Commands::Window { action } => match action {
@@ -1461,5 +1543,27 @@ mod cli_tests {
         assert!(super::resolve_target(None, None, false, false).is_err());
         assert!(super::resolve_target(None, Some("b".into()), true, false).is_err());
         assert!(super::resolve_target(Some("A".into()), None, true, true).is_err());
+    }
+
+    #[test]
+    fn test_ui_menu_drag_parse() {
+        let cli = Cli::try_parse_from(["mk", "ui", "menu", "--name", "Item"]).expect("ui menu parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "drag", "--from", "A", "--to", "B"]).expect("ui drag parse");
+        match cli.command {
+            Commands::Ui { action } => match action {
+                UiAction::Drag { from, to, from_id, to_id, .. } => {
+                    assert_eq!(from.as_deref(), Some("A"));
+                    assert_eq!(to.as_deref(), Some("B"));
+                    assert!(from_id.is_none() && to_id.is_none());
+                }
+                _ => panic!("expected Drag"),
+            },
+            _ => panic!("expected Ui"),
+        }
+        let cli = Cli::try_parse_from(["mk", "ui", "find", "--name", "Save"]).expect("ui find parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
+        let cli = Cli::try_parse_from(["mk", "ui", "type", "--id", "box1", "--text", "hola", "--clipboard"]).expect("ui type parse");
+        assert!(matches!(cli.command, Commands::Ui { .. }));
     }
 }
