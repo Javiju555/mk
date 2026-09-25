@@ -22,7 +22,10 @@ use std::fmt;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
-pub trait InputBackend {
+/// Input backends are shared across concurrent macro runs (see
+/// `mk::engine`), so they must be safe to use from several threads. All
+/// current backends are zero-sized, so this costs nothing.
+pub trait InputBackend: Send + Sync {
     fn type_text(&self, text: &str) -> Result<()>;
     fn press_key(&self, key: &str) -> Result<()>;
     fn display_name(&self) -> &str;

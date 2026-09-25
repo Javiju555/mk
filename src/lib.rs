@@ -5,5 +5,6 @@ pub mod windows;
 pub mod accessibility;
 
 pub mod doctor;
+pub mod engine;
 pub mod parser;
 pub mod scheduler;
