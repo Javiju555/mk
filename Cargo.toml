@@ -46,3 +46,6 @@ windows-sys = { version = "0.52", features = [
 core-graphics = "0.23"
 foreign-types = "0.5.0"
 
+
+[profile.release]
+strip = true
